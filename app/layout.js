@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Leaderboard App",
+  title: "Leaderboard game stand Laboratorium Sistem Informasi",
   description: "Leaderboard berdasarkan Level",
 };
 

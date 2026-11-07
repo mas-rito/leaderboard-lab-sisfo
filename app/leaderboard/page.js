@@ -12,7 +12,7 @@ export default function LeaderboardPage() {
 
   return (
     <section>
-      <h1>Leaderboard</h1>
+      <h1>Leaderboard game stand Laboratorium Sistem Informasi</h1>
       <ol className="board-list">
         {entries.map((item, index) => (
           <li
