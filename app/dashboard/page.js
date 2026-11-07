@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
-    setEntries(loadEntries());
+    loadEntries().then(setEntries);
   }, []);
 
   function resetForm() {
@@ -28,13 +28,13 @@ export default function DashboardPage() {
     setLevel("");
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setSuccess("");
     const result = editingId
-      ? updateEntry(editingId, name, level)
-      : saveEntry(name, level);
+      ? await updateEntry(editingId, name, level)
+      : await saveEntry(name, level);
 
     if (result.error) {
       setError(result.error);
@@ -58,9 +58,9 @@ export default function DashboardPage() {
     setLevel(String(item.level));
   }
 
-  function handleDelete(item) {
+  async function handleDelete(item) {
     setError("");
-    setEntries(deleteEntry(item.id));
+    setEntries(await deleteEntry(item.id));
     if (editingId === item.id) resetForm();
     setSuccess(`Data "${item.name}" berhasil dihapus.`);
   }

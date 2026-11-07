@@ -7,7 +7,7 @@ export default function LeaderboardPage() {
   const [entries, setEntries] = useState([]);
 
   useEffect(() => {
-    setEntries(loadEntries());
+    loadEntries().then(setEntries);
   }, []);
 
   return (
