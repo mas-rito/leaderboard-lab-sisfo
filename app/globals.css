@@ -173,3 +173,139 @@ h2 {
 .player-level {
   font-weight: 700;
 }
+
+
+/* Styling Timer & Status Dashboard */
+.timer-box {
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 16px 0;
+  text-align: center;
+  background: #f8fafc;
+  transition: all 0.2s ease;
+}
+
+.timer-box.timer-running {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.timer-box.timer-stopped {
+  border-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.timer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.timer-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.badge-live {
+  background: #ef4444;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  animation: pulse 1.5s infinite;
+}
+
+.badge-done {
+  background: #16a34a;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.timer-display {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 3rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: 2px;
+  margin: 10px 0;
+}
+
+.timer-summary {
+  font-size: 0.95rem;
+  color: #166534;
+  margin-bottom: 12px;
+}
+
+.timer-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* Metadata Player & Score di Baris Leaderboard */
+.player-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.player-origin {
+  font-size: 0.8rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+.board-right, .board-right-score {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.player-time, .player-time-badge {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.help-text {
+  display: block;
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.subtitle {
+  color: #64748b;
+  font-size: 0.95rem;
+  margin-top: -12px;
+  margin-bottom: 12px;
+}
+
+.tie-breaker-info {
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
