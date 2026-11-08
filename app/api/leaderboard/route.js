@@ -2,6 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { parseEnv } from "@neon/env";
 import neonConfig from "../../../neon.ts";
 import { INITIAL_ENTRIES, parseEntry } from "../../../lib/leaderboard.js";
+import { getDayRange, isValidDateKey } from "../../../lib/date.js";
 
 function getSql(unpooled = false) {
   const { postgres } = parseEnv(neonConfig, ["DATABASE_URL"]);
@@ -50,6 +51,11 @@ function ensureSchema() {
         CREATE INDEX IF NOT EXISTS idx_leaderboard_tie_breaker 
         ON leaderboard_entries (level DESC, duration_seconds ASC, created_at ASC)
       `;
+
+      await directSql`
+        CREATE INDEX IF NOT EXISTS idx_leaderboard_created_at
+        ON leaderboard_entries (created_at)
+      `;
     })().catch((err) => {
       schemaPromise = null;
       throw err;
@@ -58,13 +64,7 @@ function ensureSchema() {
   return schemaPromise;
 }
 
-async function listEntries(sql) {
-  const rows = await sql`
-    SELECT id, name, origin, level, duration_seconds, created_at
-    FROM leaderboard_entries
-    ORDER BY level DESC, duration_seconds ASC, created_at ASC
-    LIMIT 100
-  `;
+function mapEntries(rows) {
   return rows.map((row) => ({
     id: String(row.id),
     name: row.name,
@@ -75,10 +75,46 @@ async function listEntries(sql) {
   }));
 }
 
-export async function GET() {
+async function listEntries(sql, dateKey) {
+  if (dateKey) {
+    const { start, end } = getDayRange(dateKey);
+
+    const rows = await sql`
+      SELECT id, name, origin, level, duration_seconds, created_at
+      FROM leaderboard_entries
+      WHERE created_at >= ${start.toISOString()}::timestamptz
+        AND created_at < ${end.toISOString()}::timestamptz
+      ORDER BY level DESC, duration_seconds ASC, created_at ASC
+      LIMIT 100
+    `;
+
+    return mapEntries(rows);
+  }
+
+  const rows = await sql`
+    SELECT id, name, origin, level, duration_seconds, created_at
+    FROM leaderboard_entries
+    ORDER BY level DESC, duration_seconds ASC, created_at ASC
+    LIMIT 100
+  `;
+
+  return mapEntries(rows);
+}
+
+export async function GET(request) {
   await ensureSchema();
-  const entries = await listEntries(getSql());
-  return Response.json({ entries });
+
+  const date = new URL(request.url).searchParams.get("date");
+
+  if (date && !isValidDateKey(date)) {
+    return Response.json(
+      { error: "Format tanggal harus YYYY-MM-DD." },
+      { status: 400 }
+    );
+  }
+
+  const entries = await listEntries(getSql(), date);
+  return Response.json({ entries, date: date ?? null });
 }
 
 export async function POST(request) {

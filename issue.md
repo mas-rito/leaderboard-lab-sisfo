@@ -1,230 +1,278 @@
-# [ISSUE / PLAN] Halaman Player Mandiri — Input Identitas, Countdown 5 Menit, Input Level
+# [ISSUE / PLAN] Dashboard Tanpa Timer, Filter Harian, & Redesign Leaderboard
 
 > **Status:** Rencana implementasi (belum dikerjakan)
 >
-> **Basis kode:** branch `main`, commit `b88ef56`
+> **Basis kode:** branch `feature/halaman-user`, commit `b6c48d4` (PR #4)
 >
-> **Dokumen ini menggantikan** `issue.md` sebelumnya. Fitur pada dokumen lama (timer dashboard admin + tie-breaker leaderboard) **sudah diimplementasikan** dan menjadi dasar fitur baru ini.
+> **Prasyarat:** PR #4 (halaman player `/play`) sudah di-merge, **atau** branch baru dibuat dari `feature/halaman-user`. Kode di dokumen ini memakai link ke `/play` dan style `a.btn` yang berasal dari PR #4.
+>
+> **Dokumen ini menggantikan** `issue.md` sebelumnya (rencana halaman player). Rencana lama sudah diimplementasikan di PR #4 dan tetap tersimpan di riwayat Git.
 >
 > **Target pembaca:** junior programmer atau AI coding model dengan konteks terbatas.
 
 ## Cara memakai dokumen ini
 
-1. Baca Bagian 1–4 untuk memahami tujuan dan keputusan desain.
-2. Implementasikan file sesuai urutan di Bagian 8 (checklist).
-3. Jangan mengubah file di luar daftar Bagian 6 tanpa alasan kuat.
-4. Jalankan seluruh pengujian di Bagian 9 sebelum menyatakan selesai.
-5. Cocokkan hasil akhir dengan Acceptance Criteria di Bagian 10.
+1. Baca Bagian 1–4 untuk memahami perubahan perilaku dan keputusan desain.
+2. Implementasikan file sesuai urutan di Bagian 8.
+3. Jangan mengubah halaman `/play` atau aturan ranking.
+4. Jalankan pengujian di Bagian 9 dan cocokkan dengan Acceptance Criteria di Bagian 10.
 
 ---
 
-## 1. Ringkasan Fitur & Latar Belakang
+## 1. Ringkasan Perubahan
 
-Saat ini, pencatatan peserta hanya bisa dilakukan lewat **dashboard admin** (`/dashboard`). Admin harus mengetik nama dan asal peserta, menjalankan timer, lalu menyimpan hasil. Untuk stand pameran, ini membuat satu orang (admin) menjadi bottleneck dan rawan salah input.
+Ada tiga perubahan utama.
 
-Fitur baru: **halaman player mandiri** di route `/play` agar peserta bisa:
+### 1.1 Dashboard admin tidak lagi memakai timer
 
-1. Mengisi **nama** dan **asal sekolah/jurusan** sendiri.
-2. Menekan tombol **Mulai**.
-3. Melihat **countdown 5 menit (05:00 → 00:00)** berjalan di layar.
-4. Setelah countdown selesai (atau peserta menyelesaikan permainan lebih awal), mengisi **level tertinggi yang berhasil dilewati**.
-5. Menyimpan hasil ke leaderboard yang sama dengan dashboard admin.
+Saat ini dashboard (`/dashboard`) masih memiliki countdown 5 menit, tombol mulai/stop, dan input level yang baru muncul setelah sesi berhenti. Setelah perubahan:
 
-Halaman ini **tidak membuat tabel atau API baru**. Semua data tetap masuk ke `leaderboard_entries` melalui `POST /api/leaderboard` yang sudah ada.
+- Dashboard menjadi **halaman CRUD admin murni**.
+- Admin bisa langsung menambahkan peserta: nama, asal, level, dan durasi.
+- **Tidak ada countdown, tombol mulai, atau tombol stop** di dashboard.
+- Timer 5 menit hanya ada di halaman player `/play`.
 
-### Hasil yang diharapkan
+### 1.2 Leaderboard publik tidak menampilkan durasi dan tampilannya dipercantik
 
-- Peserta bisa mencatat skor tanpa bantuan admin.
-- Data yang masuk tetap lengkap: `name`, `origin`, `level`, `duration_seconds`.
-- Aturan ranking tetap: **Level tertinggi → durasi tercepat → waktu input paling awal**.
-- Refresh halaman di tengah sesi tidak menghilangkan timer (dipulihkan dari `localStorage`).
-- Dashboard admin dan halaman leaderboard publik tidak rusak.
+- Kolom/badge durasi (`⏱ 04:12`) **dihapus** dari `/leaderboard`.
+- Informasi yang ditampilkan: peringkat, nama, asal, dan level.
+- Tampilan diubah dari daftar polos menjadi:
+  - hero section dengan gradient,
+  - statistik ringkas (jumlah peserta, level tertinggi, puncak saat ini),
+  - podium visual untuk 3 besar,
+  - daftar kartu untuk peringkat 4 ke bawah,
+  - skeleton loading, empty state, dan indikator auto-refresh.
+- Tetap tanpa library/tema baru. Semua memakai CSS yang sudah ada.
 
----
+### 1.3 Peserta dipisahkan berdasarkan hari
 
-## 2. Kondisi Project Saat Ini (Hasil Inspeksi)
+- Leaderboard memiliki tab: **Hari Ini**, **Kemarin**, dan **Semua**. Default: **Hari Ini**.
+- Dashboard memiliki filter yang sama untuk melihat peserta hari ini, kemarin, atau semua.
+- Pengelompokan memakai **tanggal `created_at`** dalam zona waktu **Asia/Jakarta (WIB)**.
+- API mendukung filter tanggal: `GET /api/leaderboard?date=YYYY-MM-DD`.
+- Podium, statistik, dan daftar di leaderboard mengikuti hari yang dipilih.
+- Peserta baru dari dashboard selalu tercatat sebagai peserta **hari ini**.
 
-Stack dan struktur yang relevan:
+### 1.4 Yang tidak berubah
 
-| Item | Kondisi saat ini |
-| :--- | :--- |
-| Framework | Next.js `16.4.5` App Router |
-| React | `19.x` |
-| Bahasa | JavaScript murni (`.js`), bukan TypeScript build |
-| Styling | CSS global di `app/globals.css` (tanpa Tailwind) |
-| Database | Neon Postgres via `@neondatabase/serverless` |
-| Test | `node --test lib/leaderboard.test.mjs` |
-| Home `/` | Redirect ke `/leaderboard` |
-
-### 2.1 File yang sudah ada dan bisa dipakai ulang
-
-| File | Isi yang relevan |
-| :--- | :--- |
-| `app/api/leaderboard/route.js` | `GET`, `POST`, `PUT`, `DELETE`. Sudah memvalidasi lewat `parseEntry()`. `POST` menerima `{ name, origin, level, duration_seconds }`. |
-| `lib/leaderboard.js` | `formatDuration(seconds)`, `sortLeaderboard(entries)`, `parseEntry(...)`, `loadEntries()`, `saveEntry(name, origin, levelInput, durationInput)`, `updateEntry(...)`, `deleteEntry(...)`. |
-| `lib/leaderboard.test.mjs` | 3 test: format durasi, tie-breaker, validasi & update/delete. |
-| `app/leaderboard/page.js` | Leaderboard publik, auto-refresh tiap 10 detik, menampilkan nama, asal, level, durasi. |
-| `app/dashboard/page.js` | Dashboard admin dengan timer `idle → running → stopped`, edit, dan hapus. |
-| `app/globals.css` | Sudah ada style `.card`, `.form-group`, `.btn`, `.timer-box`, `.timer-display`, `.badge-live`, `.badge-done`, `.player-*`, dll. |
-| `types/leaderboard.ts` | Hanya referensi tipe. Tidak dipakai saat runtime karena project berjalan sebagai JavaScript. |
-
-### 2.2 Kontrak API yang sudah tersedia (JANGAN diubah)
-
-`POST /api/leaderboard`
-
-```json
-{
-  "name": "Budi",
-  "origin": "SMKN 1 Surabaya",
-  "level": 12,
-  "duration_seconds": 95
-}
-```
-
-Aturan validasi server (sudah ada di `parseEntry`):
-
-- `name` wajib, tidak boleh kosong setelah `trim`.
-- `origin` wajib, tidak boleh kosong setelah `trim`.
-- `level` harus bilangan bulat ≥ 1.
-- `duration_seconds` harus angka 0–300.
-- `id` dan `created_at` dibuat otomatis.
-
-Response sukses `POST`: `{ entries, entry }` dengan status `201`.
-Response gagal validasi: `{ error }` dengan status `400`.
-
-### 2.3 Kesimpulan penting
-
-**Tidak perlu migrasi database dan tidak perlu mengubah API.** Fitur ini murni penambahan halaman client-side yang memakai `saveEntry()` yang sudah ada.
+- Skema database **tidak berubah**. Kolom `created_at` sudah ada.
+- Field API yang dikirim/diterima tidak berubah.
+- Aturan ranking: level tertinggi → durasi tercepat → waktu input paling awal.
+- Halaman player `/play` dan countdown-nya.
+- Fungsi `saveEntry`, `updateEntry`, `deleteEntry`, `formatDuration` di `lib/leaderboard.js`.
+- `duration_seconds` tetap disimpan dan tetap dipakai untuk tie-breaker.
 
 ---
 
-## 3. Alur Pengguna & State Machine
+## 2. Kondisi Project Saat Ini
 
-Route baru: **`/play`**
+### 2.1 Dashboard (`app/dashboard/page.js`)
 
-```
-┌─────────┐   isi nama + asal, klik "Mulai"   ┌──────────┐
-│  form   │ ────────────────────────────────► │ running  │
-└─────────┘                                   └──────────┘
-     ▲                                          │      │
-     │                                          │      │ countdown 00:00
-     │                                          │      ▼
-     │                                          │  ┌──────────┐
-     │                                          │  │ finished │
-     │                                          │  └──────────┘
-     │                                          │      │
-     │        klik "Selesai & Input Level"      │      │ isi level,
-     │        (minimal 5 detik)                 │      │ klik "Simpan"
-     │                                          ▼      ▼
-     │                                     ┌──────────┐
-     └──────────────────────────────────── │  saved   │
-              "Pemain Berikutnya"          └──────────┘
-```
+Saat ini dashboard memiliki:
 
-| Phase | Yang terlihat | Aksi yang tersedia |
-| :--- | :--- | :--- |
-| `form` | Form nama + asal | `Mulai (5 Menit)` |
-| `running` | Countdown besar `MM:SS`, nama & asal, badge "SESI BERJALAN" | `Selesai & Input Level`, `Batalkan` |
-| `finished` | Durasi bermain, form level | `Simpan ke Leaderboard`, `Batal` |
-| `saved` | Ringkasan level, waktu, peringkat | `Lihat Leaderboard`, `Pemain Berikutnya` |
+- State timer: `sessionState` (`idle`/`running`/`stopped`), `countdownLeft`, `startTime`.
+- `timerIntervalRef` dan dua `useEffect` (load data + cleanup interval).
+- Handler `handleStartSession`, `handleStopSession`, `handleResetSession`.
+- Panel timer `.timer-box`, tombol "Mulai Sesi (5 Menit)", "Stop Sesi Permainan", "Ulangi / Reset Sesi".
+- Input level dan durasi yang hanya muncul saat `sessionState === "stopped"` atau mode edit.
+- `handleSubmit` menolak simpan jika sesi belum `stopped`.
 
-### Aturan transisi
+Semua bagian timer itu akan dihapus.
 
-- `form → running`: hanya jika `name.trim()` dan `origin.trim()` tidak kosong.
-- `running → finished`:
-  - otomatis saat sisa waktu mencapai `0`, **atau**
-  - manual lewat tombol "Selesai & Input Level", minimal setelah **5 detik** bermain.
-- `finished → saved`: hanya jika `level` valid (bilangan bulat ≥ 1) dan request `POST` sukses.
-- `saved → form`: tombol "Pemain Berikutnya" mereset seluruh state.
-- `running/finished → form`: tombol "Batalkan"/"Batal" (konfirmasi jika sedang running).
+### 2.2 Leaderboard (`app/leaderboard/page.js`)
 
-### Perilaku saat refresh
+Saat ini:
 
-State sesi disimpan di `localStorage` dengan key `lab-sisfo:active-session`:
+- Mengimpor `getRankColor` dan `formatDuration`.
+- Menampilkan durasi lewat `.player-time-badge` dengan teks `⏱ MM:SS`.
+- Memakai baris `.board-row` dengan warna latar dari `getRankColor(index)`.
+- Auto-refresh setiap 10 detik.
+- Menampilkan **semua** peserta tanpa filter hari.
+- Header berisi link "Main" ke `/play` dan "Kelola (Admin)" ke `/dashboard`.
 
-```json
-{
-  "name": "Budi",
-  "origin": "SMKN 1 Surabaya",
-  "startTime": 1730000000000,
-  "finishedAt": null
-}
-```
+Durasi akan dihapus dari tampilan, struktur visual diganti, dan data difilter per hari.
 
-- Refresh saat `running` → hitung ulang sisa waktu dari `startTime`, lanjutkan countdown.
-- Refresh saat `finished` → tetap di form level dengan durasi yang sama (`finishedAt` tersimpan).
-- Refresh saat `saved` → `localStorage` sudah dibersihkan, kembali ke `form`.
+### 2.3 API (`app/api/leaderboard/route.js`)
+
+Saat ini:
+
+- `GET` mengembalikan semua entri, diurutkan `level DESC, duration_seconds ASC, created_at ASC`, dengan `LIMIT 100`.
+- Belum ada parameter filter tanggal.
+- `POST`, `PUT`, dan `DELETE` mengembalikan `{ entries }` berisi semua entri.
+- `ensureSchema()` sudah membuat tabel, kolom, dan index tie-breaker.
+- `created_at` bertipe `TIMESTAMPTZ` dan diisi otomatis oleh database saat insert.
+
+### 2.4 CSS (`app/globals.css`)
+
+Sudah tersedia:
+
+- Dasar: `.container` (max-width `640px`), `.card`, `.form-group`, `.btn`, `.btn-secondary`, `.btn-primary`, `.header-links`, `.action-row`.
+- Timer: `.timer-box`, `.timer-header`, `.timer-label`, `.badge-live`, `.badge-done`, `.timer-display`, `.timer-actions`, `.timer-warning`.
+- Leaderboard lama: `.board-list`, `.board-row`, `.rank-badge`, `.player-*`, `.tie-breaker-info`.
+
+**Penting:** jangan menghapus CSS timer. Halaman `/play` masih memakai `.timer-header`, `.timer-label`, `.badge-live`, `.badge-done`, `.timer-display`, `.timer-actions`, dan `.timer-warning`.
+
+### 2.5 Data timestamp
+
+- `created_at` sudah dikirim API sebagai ISO string.
+- Belum ada kolom `played_on` atau `session_started_at`.
+- Pengelompokan hari akan memakai `created_at`, yaitu waktu data **disimpan**, bukan waktu sesi dimulai.
 
 ---
 
-## 4. Keputusan Desain (Wajib Dibaca Sebelum Coding)
+## 3. Tujuan & Non-Tujuan
 
-### 4.1 Tombol "Selesai & Input Level" (early finish) itu penting
+### Tujuan
 
-Tanpa tombol ini, semua peserta yang memakai `/play` akan selalu mendapat `duration_seconds = 300`. Akibatnya, tie-breaker "durasi tercepat" tidak pernah membedakan peserta — yang membedakan hanya `created_at`, sehingga peserta yang mencatat lebih dulu justru menang. Itu tidak adil.
+- Admin dapat menambah peserta tanpa menjalankan countdown.
+- Countdown hanya tersedia di `/play`.
+- `/leaderboard` tidak menampilkan durasi.
+- Tampilan leaderboard lebih menarik, modern, dan tidak minimalis.
+- Peserta dipisahkan berdasarkan hari: hari ini, kemarin, dan semua.
+- Filter hari tersedia di leaderboard dan dashboard.
+- Tidak ada regresi pada `/play`, API, atau data lama.
 
-Karena itu alurnya:
+### Non-Tujuan
 
-- Countdown 5 menit adalah **batas maksimal**.
-- Peserta yang selesai lebih cepat menekan **"Selesai & Input Level"**.
-- Durasi yang disimpan = waktu berjalan sejak `startTime` sampai tombol ditekan.
-- Jika countdown habis, durasi = `300`.
-
-### 4.2 Timer dihitung dari timestamp, bukan decrement state
-
-Jangan lakukan `setRemaining(remaining - 1)` setiap detik. Saat tab di-background atau laptop sleep, interval bisa melambat. Yang benar:
-
-```js
-remaining = 300 - Math.floor((Date.now() - startTime) / 1000)
-```
-
-Dengan cara ini, timer tetap akurat dan otomatis "mengejar" waktu yang terlewat.
-
-### 4.3 `localStorage` hanya diakses di client
-
-Next.js tetap melakukan server-side rendering untuk client component. Jangan membaca `localStorage` di:
-
-- body component,
-- `useState(() => localStorage.getItem(...))`,
-- module scope.
-
-Baca hanya di dalam `useEffect` atau event handler (`onClick`, `onSubmit`). Jika tidak, muncul error `localStorage is not defined` saat SSR.
-
-### 4.4 Tidak ada autentikasi
-
-`/play` memang publik agar peserta bisa memakai sendiri. Ini konsisten dengan kondisi project saat ini yang belum punya login. Jangan menambahkan auth pada task ini.
-
-### 4.5 Validasi & keamanan
-
-- Validasi utama tetap di server (`parseEntry`). Form player hanya validasi UX.
-- Level bersifat **self-reported** dan durasi dihitung di client, jadi secara teknis bisa dimanipulasi (misalnya lewat DevTools atau memanggil API langsung). Untuk stand lab dengan pengawasan, ini dapat diterima.
-- Jangan menambah kolom database baru untuk task ini. Pengerasan server-side (session token) dicatat sebagai pekerjaan opsional di Bagian 12.
-
-### 4.6 Dashboard admin tidak diubah besar-besaran
-
-Dashboard sudah punya timer sendiri. Pada task ini dashboard hanya ditambah **link** ke `/play` agar tidak terjadi regresi. Refactor dashboard agar memakai helper yang sama dicatat sebagai pekerjaan opsional.
+- Mengubah skema database atau menambah kolom baru.
+- Mengubah aturan tie-breaker.
+- Menambah autentikasi admin.
+- Menambah library UI/animation.
+- Mengubah halaman `/play`.
+- Menghapus data lama.
+- Membuat date-range picker bebas (cukup Hari Ini/Kemarin/Semua).
+- Mengelompokkan berdasarkan waktu sesi dimulai (butuh kolom baru; lihat Bagian 12).
 
 ---
 
-## 5. Scope & Non-Scope
+## 4. Keputusan Desain
 
-### Termasuk scope
+### 4.1 Dashboard tetap menyimpan `duration_seconds`
 
-- Halaman baru `/play` dengan alur form → countdown → input level → simpan.
-- Helper timer murni + unit test.
-- Pemulihan sesi dari `localStorage`.
-- Style halaman player.
-- Link navigasi dari `/leaderboard` dan `/dashboard` ke `/play`.
-- Update script test agar menjalankan test baru.
+Meskipun leaderboard tidak menampilkan durasi, field `duration_seconds` masih dipakai untuk tie-breaker. Karena itu dashboard tetap punya input durasi:
 
-### Di luar scope
+- Default: **300 detik (05:00)**.
+- Bisa diubah manual 0–300 detik.
+- Label diberi keterangan "dipakai untuk tie-breaker".
+- Admin yang tidak peduli durasi cukup membiarkan nilai default.
 
-- Migrasi database atau kolom baru.
-- Perubahan aturan ranking.
-- Login/admin authorization.
-- WebSocket/real-time leaderboard (polling 10 detik sudah ada).
-- Anti-cheat server-side.
-- Perubahan besar pada dashboard admin.
+Alternatif yang **jangan** dipakai: mengirim `duration_seconds: 0` untuk semua entri dashboard. Itu membuat entri admin selalu menang tie-breaker secara tidak adil.
+
+### 4.2 Dashboard tidak lagi memiliki state timer
+
+Hapus seluruh state dan handler timer. Form langsung bisa disubmit. Ini mengurangi kompleksitas dan menghilangkan bug "sesi belum selesai" saat admin hanya ingin menambah peserta.
+
+### 4.3 Leaderboard menyembunyikan durasi, bukan mengubah ranking
+
+API tetap mengurutkan `level DESC, duration_seconds ASC, created_at ASC`. UI hanya tidak menampilkan durasi. Footer leaderboard menjelaskan aturan secara ringkas: "level tertinggi, lalu waktu bermain tercepat".
+
+### 4.4 Redesign memakai CSS murni
+
+Tidak menambah dependency. Semua style baru memakai class berprefix `lb-` agar tidak bentrok dengan dashboard atau `/play`.
+
+### 4.5 Tetap mobile-first
+
+Container saat ini `max-width: 640px`. Desain podium dan daftar harus nyaman di lebar 375 px. Podium menjadi susunan vertikal di layar kecil; daftar tetap satu kolom.
+
+### 4.6 Definisi "hari" memakai Asia/Jakarta
+
+- Zona waktu acuan: **Asia/Jakarta (WIB, UTC+7)**.
+- Semua pengelompokan dan label hari memakai zona ini, bukan zona waktu perangkat pengunjung.
+- Alasan: stand berada di Indonesia; hasil harus konsisten antara layar leaderboard, dashboard admin, dan API.
+- Jakarta tidak memiliki DST, jadi offset `+07:00` aman.
+- Jika stand dipindah ke zona waktu lain, ubah `APP_TIME_ZONE` dan `APP_UTC_OFFSET` di `lib/date.js`.
+
+### 4.7 Filter tanggal dilakukan di server
+
+- API menerima `?date=YYYY-MM-DD`.
+- Server menghitung batas UTC untuk tanggal tersebut di Asia/Jakarta, lalu memfilter `created_at`.
+- Tanpa parameter `date`, API tetap mengembalikan semua entri (backward compatible).
+- Index sederhana pada `created_at` ditambahkan agar filter tetap cepat.
+
+Alasan tidak memfilter hanya di client:
+
+- API hanya mengembalikan maksimal 100 entri. Jika data sudah banyak, entri hari ini/kemarin bisa terpotong.
+- Filter server membuat hasil konsisten dan tidak bergantung pada data yang sudah dimuat.
+
+### 4.8 Leaderboard memakai tab, dashboard memakai select
+
+- Leaderboard: tab **Hari Ini / Kemarin / Semua** agar podium tetap fokus pada satu hari.
+- Dashboard: dropdown **Hari Ini / Kemarin / Semua** agar form dan daftar tetap ringkas.
+- Alternatif dua section bertumpuk (Hari Ini + Kemarin sekaligus) tidak dipakai karena akan memanjangkan halaman dan membuat podium ganda.
+
+### 4.9 Tambah peserta dari dashboard selalu masuk "Hari Ini"
+
+- `created_at` diisi otomatis oleh database saat insert, jadi tidak bisa memilih hari saat menambah.
+- Jika admin sedang melihat filter "Kemarin" lalu menambah peserta, dashboard otomatis berpindah ke filter "Hari Ini" setelah simpan agar peserta baru langsung terlihat.
+- Edit tidak mengubah `created_at`; entri tetap berada di hari aslinya.
+- Hapus tetap berada di filter yang sedang aktif.
+
+### 4.10 Tidak menambah kolom `played_on`
+
+Kolom `created_at` sudah cukup untuk memisahkan data berdasarkan hari pencatatan. Menambah kolom baru hanya diperlukan jika ingin mengelompokkan berdasarkan **waktu sesi dimulai** (lihat Bagian 12).
+
+---
+
+## 5. Alur
+
+### 5.1 Dashboard
+
+```
+Buka /dashboard
+   │
+   ├─ Pilih filter: Hari Ini / Kemarin / Semua
+   │     ▼
+   │  GET /api/leaderboard?date=YYYY-MM-DD (atau tanpa date untuk Semua)
+   │
+   ├─ Form tambah (nama, asal, level, durasi)
+   │     ▼
+   │  POST /api/leaderboard
+   │     ▼
+   │  Jika filter bukan "Hari Ini", otomatis pindah ke "Hari Ini"
+   │
+   ├─ Edit baris
+   │     ▼
+   │  PUT /api/leaderboard → refresh filter aktif
+   │
+   └─ Hapus baris
+         ▼
+      DELETE /api/leaderboard → refresh filter aktif
+```
+
+### 5.2 Leaderboard
+
+```
+Buka /leaderboard
+   │
+   ├─ Tab default: Hari Ini
+   │     ▼
+   │  GET /api/leaderboard?date=<hari-ini-WIB>
+   │
+   ├─ Klik "Kemarin"
+   │     ▼
+   │  GET /api/leaderboard?date=<kemarin-WIB>
+   │
+   ├─ Klik "Semua"
+   │     ▼
+   │  GET /api/leaderboard (tanpa date)
+   │
+   └─ Setiap 10 detik, ulangi request untuk tab aktif
+```
+
+### 5.3 API
+
+```
+GET /api/leaderboard
+  → semua entri (limit 100)
+
+GET /api/leaderboard?date=2026-11-08
+  → entri dengan created_at >= 2026-11-07T17:00:00Z
+    dan created_at < 2026-11-08T17:00:00Z
+    (yaitu 8 November 2026 00:00–23:59:59 WIB)
+
+GET /api/leaderboard?date=2026-02-31
+  → 400 { "error": "Format tanggal harus YYYY-MM-DD." }
+```
 
 ---
 
@@ -232,160 +280,169 @@ Dashboard sudah punya timer sendiri. Pada task ini dashboard hanya ditambah **li
 
 | File | Aksi | Keterangan |
 | :--- | :---: | :--- |
-| `lib/session.js` | **Baru** | Konstanta dan helper murni timer + parser `localStorage`. |
-| `lib/session.test.mjs` | **Baru** | Unit test untuk helper timer. |
-| `package.json` | **Ubah** | Script `test` menjalankan dua file test. |
-| `app/play/page.js` | **Baru** | Halaman player mandiri. |
-| `app/globals.css` | **Ubah** | Style halaman player, `.btn-primary`, `.header-links`. |
-| `app/leaderboard/page.js` | **Ubah kecil** | Tambah link ke `/play`. |
-| `app/dashboard/page.js` | **Ubah kecil** | Tambah link ke `/play`. |
-| `app/api/leaderboard/route.js` | Tidak diubah | Sudah mendukung semua field. |
-| `lib/leaderboard.js` | Tidak diubah | `formatDuration` dan `saveEntry` dipakai ulang. |
-| `types/leaderboard.ts` | Tidak diubah | Interface sudah sesuai. |
-| `app/page.js` | Tidak diubah | Tetap redirect ke `/leaderboard`. |
+| `lib/date.js` | **Baru** | Helper tanggal: date key WIB, kemarin, validasi, range, label. |
+| `lib/date.test.mjs` | **Baru** | Unit test helper tanggal. |
+| `package.json` | **Ubah** | Script test menjalankan `date.test.mjs`. |
+| `lib/leaderboard.js` | **Ubah** | `loadEntries(dateKey)` mengirim query `?date=`. |
+| `app/api/leaderboard/route.js` | **Ubah** | `GET` menerima `?date=`, filter SQL, validasi, index `created_at`. |
+| `app/dashboard/page.js` | **Ganti total** | Hapus timer; form tambah/edit + filter hari. |
+| `app/leaderboard/page.js` | **Ganti total** | Hapus durasi; hero, tab hari, podium, daftar kartu. |
+| `app/globals.css` | **Tambah** | Style dashboard, tab hari, dan seluruh `.lb-*`. |
+| `app/play/page.js` | Tidak diubah | Countdown tetap di sini. |
+| `lib/session.js` | Tidak diubah | Hanya dipakai `/play`. |
+| `app/layout.js` | Tidak diubah | Container tetap 640 px. |
+| `types/leaderboard.ts` | Tidak diubah | Tidak ada field baru. |
 
 ---
 
-## 7. Implementasi Detail per File
+## 7. Implementasi Detail
 
-### 7.1 File baru: `lib/session.js`
+### 7.1 File baru: `lib/date.js`
 
-Buat file ini persis seperti berikut. Tujuannya memisahkan logika waktu dari komponen React agar mudah diuji tanpa browser.
+Helper ini murni (tidak menyentuh DOM) sehingga bisa dipakai di client dan server.
 
 ```javascript
-/**
- * Konstanta & helper murni untuk sesi permainan player.
- * File ini sengaja tidak menyentuh DOM/localStorage agar mudah diuji.
- */
-
-export const TOTAL_COUNTDOWN_SECONDS = 300; // 5 menit
-export const SESSION_STORAGE_KEY = "lab-sisfo:active-session";
+export const APP_TIME_ZONE = "Asia/Jakarta";
+export const APP_UTC_OFFSET = "+07:00";
 
 /**
- * Menghitung detik yang sudah berlalu sejak startTime.
- * Hasil selalu dibulatkan ke bawah dan dijepit di rentang 0..300.
+ * Mengembalikan tanggal lokal (YYYY-MM-DD) di zona waktu tertentu.
  */
-export function getElapsedSeconds(startTime, now = Date.now()) {
-  const started = Number(startTime);
-  if (!Number.isFinite(started) || started <= 0) return 0;
+export function getDateKey(date = new Date(), timeZone = APP_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
 
-  const elapsed = Math.floor((Number(now) - started) / 1000);
-  return Math.min(Math.max(elapsed, 0), TOTAL_COUNTDOWN_SECONDS);
-}
-
-/**
- * Sisa waktu countdown. 300 detik di awal, 0 saat habis.
- */
-export function getRemainingSeconds(startTime, now = Date.now()) {
-  return TOTAL_COUNTDOWN_SECONDS - getElapsedSeconds(startTime, now);
-}
-
-/**
- * Membaca sesi dari string JSON localStorage.
- * Mengembalikan null jika data tidak valid/korup.
- */
-export function parseStoredSession(raw) {
-  if (!raw) return null;
-
-  let data;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return null;
+  const map = {};
+  for (const part of parts) {
+    if (part.type !== "literal") map[part.type] = part.value;
   }
 
-  const name = String(data?.name ?? "").trim();
-  const origin = String(data?.origin ?? "").trim();
-  const startTime = Number(data?.startTime);
+  return `${map.year}-${map.month}-${map.day}`;
+}
 
-  if (!name || !origin) return null;
-  if (!Number.isFinite(startTime) || startTime <= 0) return null;
+export function getTodayKey(now = new Date(), timeZone = APP_TIME_ZONE) {
+  return getDateKey(now, timeZone);
+}
 
-  const finishedAtRaw = Number(data?.finishedAt);
-  const finishedAt =
-    Number.isFinite(finishedAtRaw) && finishedAtRaw > 0 ? finishedAtRaw : null;
+export function getYesterdayKey(now = new Date(), timeZone = APP_TIME_ZONE) {
+  const todayKey = getDateKey(now, timeZone);
+  const [year, month, day] = todayKey.split("-").map(Number);
+  const yesterday = new Date(Date.UTC(year, month - 1, day - 1));
+  return yesterday.toISOString().slice(0, 10);
+}
 
-  return { name, origin, startTime, finishedAt };
+/**
+ * day: "today" | "yesterday" | "all"
+ * Mengembalikan null untuk "all" (tanpa filter tanggal).
+ */
+export function getRelativeDayKey(day, now = new Date(), timeZone = APP_TIME_ZONE) {
+  if (day === "today") return getTodayKey(now, timeZone);
+  if (day === "yesterday") return getYesterdayKey(now, timeZone);
+  return null;
+}
+
+/**
+ * Validasi format YYYY-MM-DD sekaligus memastikan tanggalnya nyata.
+ */
+export function isValidDateKey(value) {
+  const text = String(value ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+
+  const date = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
+}
+
+/**
+ * Batas UTC untuk satu hari di Asia/Jakarta.
+ * Contoh: 2026-11-08 -> 2026-11-07T17:00:00Z s/d 2026-11-08T17:00:00Z.
+ */
+export function getDayRange(dateKey) {
+  const start = new Date(`${dateKey}T00:00:00${APP_UTC_OFFSET}`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start, end };
+}
+
+/**
+ * Label hari dalam bahasa Indonesia, mis. "Minggu, 8 November 2026".
+ */
+export function formatDateLabel(dateKey, timeZone = APP_TIME_ZONE) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
 }
 ```
 
+Catatan:
+
+- `getDateKey` memakai `formatToParts` agar hasil `YYYY-MM-DD` konsisten di berbagai runtime.
+- `getYesterdayKey` memakai `Date.UTC` dari komponen tanggal, sehingga aman untuk pergantian bulan/tahun.
+- `getDayRange` memakai offset tetap `+07:00` karena Asia/Jakarta tidak memiliki DST.
+- `formatDateLabel` memakai pukul 12:00 UTC agar tidak bergeser hari saat diformat.
+
 ---
 
-### 7.2 File baru: `lib/session.test.mjs`
+### 7.2 File baru: `lib/date.test.mjs`
 
 ```javascript
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  TOTAL_COUNTDOWN_SECONDS,
-  getElapsedSeconds,
-  getRemainingSeconds,
-  parseStoredSession,
-} from "./session.js";
+  getDateKey,
+  getYesterdayKey,
+  getRelativeDayKey,
+  isValidDateKey,
+  getDayRange,
+  formatDateLabel,
+} from "./date.js";
 
-const START = 1_700_000_000_000;
-
-test("getElapsedSeconds menghitung selisih waktu dan menjepit 0..300", () => {
-  assert.equal(getElapsedSeconds(START, START), 0);
-  assert.equal(getElapsedSeconds(START, START + 5_000), 5);
-  assert.equal(getElapsedSeconds(START, START + 5_900), 5);
-  assert.equal(getElapsedSeconds(START, START + 299_000), 299);
-  assert.equal(getElapsedSeconds(START, START + 300_000), 300);
-  assert.equal(getElapsedSeconds(START, START + 999_000), 300);
-  assert.equal(getElapsedSeconds(START, START - 10_000), 0);
-  assert.equal(getElapsedSeconds(null, START), 0);
-  assert.equal(getElapsedSeconds("bukan-angka", START), 0);
+test("getDateKey memakai zona Asia/Jakarta", () => {
+  assert.equal(getDateKey(new Date("2026-11-08T16:59:59Z")), "2026-11-08");
+  assert.equal(getDateKey(new Date("2026-11-08T17:00:00Z")), "2026-11-09");
 });
 
-test("getRemainingSeconds menghasilkan countdown 300 -> 0", () => {
-  assert.equal(getRemainingSeconds(START, START), TOTAL_COUNTDOWN_SECONDS);
-  assert.equal(getRemainingSeconds(START, START + 5_000), 295);
-  assert.equal(getRemainingSeconds(START, START + 300_000), 0);
-  assert.equal(getRemainingSeconds(START, START + 999_000), 0);
+test("getYesterdayKey menangani pergantian bulan dan tahun", () => {
+  assert.equal(getYesterdayKey(new Date("2026-11-08T12:00:00Z")), "2026-11-07");
+  assert.equal(getYesterdayKey(new Date("2026-12-01T12:00:00Z")), "2026-11-30");
+  assert.equal(getYesterdayKey(new Date("2027-01-01T12:00:00Z")), "2026-12-31");
 });
 
-test("parseStoredSession memvalidasi data localStorage", () => {
-  assert.equal(parseStoredSession(null), null);
-  assert.equal(parseStoredSession(""), null);
-  assert.equal(parseStoredSession("{bukan json"), null);
-  assert.equal(
-    parseStoredSession(
-      JSON.stringify({ name: "", origin: "SMA 1", startTime: START })
-    ),
-    null
-  );
-  assert.equal(
-    parseStoredSession(
-      JSON.stringify({ name: "Budi", origin: "", startTime: START })
-    ),
-    null
-  );
-  assert.equal(
-    parseStoredSession(
-      JSON.stringify({ name: "Budi", origin: "SMA 1", startTime: "x" })
-    ),
-    null
-  );
+test("getRelativeDayKey mengembalikan null untuk semua hari", () => {
+  const now = new Date("2026-11-08T12:00:00Z");
+  assert.equal(getRelativeDayKey("today", now), "2026-11-08");
+  assert.equal(getRelativeDayKey("yesterday", now), "2026-11-07");
+  assert.equal(getRelativeDayKey("all", now), null);
+});
 
-  const running = parseStoredSession(
-    JSON.stringify({ name: "  Budi  ", origin: "  SMA 1  ", startTime: START })
-  );
-  assert.deepEqual(running, {
-    name: "Budi",
-    origin: "SMA 1",
-    startTime: START,
-    finishedAt: null,
-  });
+test("isValidDateKey menolak format dan tanggal tidak valid", () => {
+  assert.equal(isValidDateKey("2026-11-08"), true);
+  assert.equal(isValidDateKey("2026-02-31"), false);
+  assert.equal(isValidDateKey("08-11-2026"), false);
+  assert.equal(isValidDateKey(""), false);
+  assert.equal(isValidDateKey(null), false);
+});
 
-  const finished = parseStoredSession(
-    JSON.stringify({
-      name: "Budi",
-      origin: "SMA 1",
-      startTime: START,
-      finishedAt: START + 42_000,
-    })
-  );
-  assert.equal(finished.finishedAt, START + 42_000);
+test("getDayRange menghasilkan batas UTC untuk Asia/Jakarta", () => {
+  const { start, end } = getDayRange("2026-11-08");
+  assert.equal(start.toISOString(), "2026-11-07T17:00:00.000Z");
+  assert.equal(end.toISOString(), "2026-11-08T17:00:00.000Z");
+});
+
+test("formatDateLabel menampilkan hari dalam bahasa Indonesia", () => {
+  const label = formatDateLabel("2026-11-08");
+  assert.ok(label.includes("Minggu"));
+  assert.ok(label.includes("November"));
+  assert.ok(label.includes("2026"));
 });
 ```
 
@@ -393,223 +450,210 @@ test("parseStoredSession memvalidasi data localStorage", () => {
 
 ### 7.3 Ubah `package.json`
 
-Saat ini script test hanya menjalankan satu file:
-
-```json
-"test": "node --test lib/leaderboard.test.mjs"
-```
-
-Ubah menjadi:
-
 ```diff
--    "test": "node --test lib/leaderboard.test.mjs"
-+    "test": "node --test lib/leaderboard.test.mjs lib/session.test.mjs"
+-    "test": "node --test lib/leaderboard.test.mjs lib/session.test.mjs"
++    "test": "node --test lib/leaderboard.test.mjs lib/session.test.mjs lib/date.test.mjs"
 ```
+
+Total test setelah perubahan: **12 test** (3 leaderboard + 3 session + 6 date).
 
 ---
 
-### 7.4 File baru: `app/play/page.js`
+### 7.4 Ubah `lib/leaderboard.js`
 
-Ini komponen utama halaman player. Salin **persis**, lalu sesuaikan hanya jika ada kebutuhan produk yang berubah.
+Hanya fungsi `loadEntries` yang berubah. Fungsi lain tetap.
+
+```javascript
+export async function loadEntries(dateKey) {
+  const query = dateKey ? `?date=${encodeURIComponent(dateKey)}` : "";
+  const res = await fetch(`/api/leaderboard${query}`, { cache: "no-store" });
+  if (!res.ok) return [];
+
+  const data = await res.json();
+  return Array.isArray(data.entries) ? data.entries : [];
+}
+```
+
+- `dateKey` opsional. Tanpa argumen, perilaku lama (semua entri) tetap sama.
+- `encodeURIComponent` mencegah karakter aneh masuk ke query string.
+
+---
+
+### 7.5 Ubah `app/api/leaderboard/route.js`
+
+#### 7.5.1 Tambahkan import
+
+Di bagian atas file:
+
+```javascript
+import { getDayRange, isValidDateKey } from "../../../lib/date.js";
+```
+
+#### 7.5.2 Ganti fungsi `listEntries`
+
+Ganti fungsi `listEntries` yang lama dengan dua fungsi berikut:
+
+```javascript
+function mapEntries(rows) {
+  return rows.map((row) => ({
+    id: String(row.id),
+    name: row.name,
+    origin: row.origin || "-",
+    level: Number(row.level),
+    duration_seconds: Number(row.duration_seconds || 0),
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
+  }));
+}
+
+async function listEntries(sql, dateKey) {
+  if (dateKey) {
+    const { start, end } = getDayRange(dateKey);
+
+    const rows = await sql`
+      SELECT id, name, origin, level, duration_seconds, created_at
+      FROM leaderboard_entries
+      WHERE created_at >= ${start.toISOString()}::timestamptz
+        AND created_at < ${end.toISOString()}::timestamptz
+      ORDER BY level DESC, duration_seconds ASC, created_at ASC
+      LIMIT 100
+    `;
+
+    return mapEntries(rows);
+  }
+
+  const rows = await sql`
+    SELECT id, name, origin, level, duration_seconds, created_at
+    FROM leaderboard_entries
+    ORDER BY level DESC, duration_seconds ASC, created_at ASC
+    LIMIT 100
+  `;
+
+  return mapEntries(rows);
+}
+```
+
+#### 7.5.3 Ganti handler `GET`
+
+```javascript
+export async function GET(request) {
+  await ensureSchema();
+
+  const date = new URL(request.url).searchParams.get("date");
+
+  if (date && !isValidDateKey(date)) {
+    return Response.json(
+      { error: "Format tanggal harus YYYY-MM-DD." },
+      { status: 400 }
+    );
+  }
+
+  const entries = await listEntries(getSql(), date);
+  return Response.json({ entries, date: date ?? null });
+}
+```
+
+#### 7.5.4 Tambahkan index `created_at`
+
+Di dalam `ensureSchema()`, setelah pembuatan index tie-breaker yang sudah ada, tambahkan:
+
+```javascript
+await directSql`
+  CREATE INDEX IF NOT EXISTS idx_leaderboard_created_at
+  ON leaderboard_entries (created_at)
+`;
+```
+
+Index ini mempercepat filter `created_at >= ... AND created_at < ...`.
+
+#### 7.5.5 Handler lain
+
+`POST`, `PUT`, dan `DELETE` **tidak perlu diubah**. Pemanggilan `listEntries(sql)` tetap valid karena `dateKey` opsional. Response mereka tetap berisi semua entri; halaman yang membutuhkan filter akan memanggil `loadEntries(dateKey)` lagi setelah mutasi.
+
+---
+
+### 7.6 Ganti isi `app/dashboard/page.js`
+
+Ganti seluruh isi file dengan kode berikut.
 
 ```jsx
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { formatDuration, saveEntry } from "../../lib/leaderboard";
 import {
-  SESSION_STORAGE_KEY,
-  TOTAL_COUNTDOWN_SECONDS,
-  getElapsedSeconds,
-  getRemainingSeconds,
-  parseStoredSession,
-} from "../../lib/session";
+  getRankColor,
+  loadEntries,
+  saveEntry,
+  updateEntry,
+  deleteEntry,
+  formatDuration,
+} from "../../lib/leaderboard";
+import { getRelativeDayKey } from "../../lib/date";
 
-const MIN_EARLY_FINISH_SECONDS = 5;
+const DEFAULT_DURATION_SECONDS = 300;
 
-export default function PlayPage() {
-  // phase: "form" | "running" | "finished" | "saved"
-  const [phase, setPhase] = useState("form");
+const DAY_OPTIONS = [
+  { value: "today", label: "Hari Ini" },
+  { value: "yesterday", label: "Kemarin" },
+  { value: "all", label: "Semua" },
+];
+
+export default function DashboardPage() {
+  const [entries, setEntries] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [selectedDay, setSelectedDay] = useState("today");
+  const [loadingEntries, setLoadingEntries] = useState(true);
 
   const [name, setName] = useState("");
   const [origin, setOrigin] = useState("");
   const [level, setLevel] = useState("");
-
-  const [startTime, setStartTime] = useState(null);
-  const [durationSeconds, setDurationSeconds] = useState(0);
-  const [remainingSeconds, setRemainingSeconds] = useState(
-    TOTAL_COUNTDOWN_SECONDS
+  const [durationSeconds, setDurationSeconds] = useState(
+    DEFAULT_DURATION_SECONDS
   );
 
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [saving, setSaving] = useState(false);
-  const [savedInfo, setSavedInfo] = useState(null);
 
-  const intervalRef = useRef(null);
-
-  const clearTimer = useCallback(() => {
-    if (intervalRef.current !== null) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  // Menyelesaikan sesi: hitung durasi dari timestamp, lalu simpan status finished.
-  const finishSession = useCallback(
-    (startedAt, finishedAt = Date.now()) => {
-      clearTimer();
-
-      const elapsed = getElapsedSeconds(startedAt, finishedAt);
-      setDurationSeconds(elapsed);
-      setRemainingSeconds(0);
-      setPhase("finished");
-
-      try {
-        const stored = parseStoredSession(
-          localStorage.getItem(SESSION_STORAGE_KEY)
-        );
-        if (stored) {
-          localStorage.setItem(
-            SESSION_STORAGE_KEY,
-            JSON.stringify({
-              name: stored.name,
-              origin: stored.origin,
-              startTime: stored.startTime,
-              finishedAt,
-            })
-          );
-        }
-      } catch {
-        // localStorage tidak tersedia (mode privat); sesi tetap jalan di memori.
-      }
-    },
-    [clearTimer]
-  );
-
-  // Pulihkan sesi setelah refresh / tidak sengaja menutup tab.
   useEffect(() => {
-    let stored = null;
-    try {
-      stored = parseStoredSession(localStorage.getItem(SESSION_STORAGE_KEY));
-    } catch {
-      stored = null;
-    }
+    let active = true;
+    setLoadingEntries(true);
 
-    if (stored) {
-      setName(stored.name);
-      setOrigin(stored.origin);
-      setStartTime(stored.startTime);
+    loadEntries(getRelativeDayKey(selectedDay)).then((data) => {
+      if (!active) return;
+      setEntries(data);
+      setLoadingEntries(false);
+    });
 
-      if (stored.finishedAt) {
-        setDurationSeconds(
-          getElapsedSeconds(stored.startTime, stored.finishedAt)
-        );
-        setRemainingSeconds(0);
-        setPhase("finished");
-      } else {
-        const elapsed = getElapsedSeconds(stored.startTime, Date.now());
-        if (elapsed >= TOTAL_COUNTDOWN_SECONDS) {
-          finishSession(
-            stored.startTime,
-            stored.startTime + TOTAL_COUNTDOWN_SECONDS * 1000
-          );
-        } else {
-          setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS - elapsed);
-          setPhase("running");
-        }
-      }
-    }
+    return () => {
+      active = false;
+    };
+  }, [selectedDay]);
 
-    return clearTimer;
-  }, [clearTimer, finishSession]);
-
-  // Tick countdown. Selalu dihitung dari startTime agar tidak drift.
-  useEffect(() => {
-    if (phase !== "running" || !startTime) return;
-
-    clearTimer();
-    intervalRef.current = setInterval(() => {
-      const left = getRemainingSeconds(startTime, Date.now());
-      if (left <= 0) {
-        finishSession(
-          startTime,
-          startTime + TOTAL_COUNTDOWN_SECONDS * 1000
-        );
-      } else {
-        setRemainingSeconds(left);
-      }
-    }, 250);
-
-    return clearTimer;
-  }, [phase, startTime, clearTimer, finishSession]);
-
-  function handleStart(event) {
-    event.preventDefault();
-    setError("");
-
-    const cleanName = name.trim();
-    const cleanOrigin = origin.trim();
-
-    if (!cleanName) {
-      setError("Nama wajib diisi sebelum mulai.");
-      return;
-    }
-    if (!cleanOrigin) {
-      setError("Asal sekolah/jurusan wajib diisi sebelum mulai.");
-      return;
-    }
-
-    const now = Date.now();
-    setStartTime(now);
-    setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS);
-    setDurationSeconds(0);
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setOrigin("");
     setLevel("");
-    setSavedInfo(null);
-    setPhase("running");
-
-    try {
-      localStorage.setItem(
-        SESSION_STORAGE_KEY,
-        JSON.stringify({
-          name: cleanName,
-          origin: cleanOrigin,
-          startTime: now,
-          finishedAt: null,
-        })
-      );
-    } catch {
-      // Abaikan jika localStorage diblokir.
-    }
+    setDurationSeconds(DEFAULT_DURATION_SECONDS);
+    setError("");
   }
 
-  function handleFinishEarly() {
-    if (!startTime) return;
-
-    const elapsed = getElapsedSeconds(startTime, Date.now());
-    if (elapsed < MIN_EARLY_FINISH_SECONDS) {
-      setError(
-        `Tunggu minimal ${MIN_EARLY_FINISH_SECONDS} detik sebelum menyelesaikan sesi.`
-      );
-      return;
-    }
-
-    setError("");
-    finishSession(startTime);
+  async function refreshEntries(day = selectedDay) {
+    const data = await loadEntries(getRelativeDayKey(day));
+    setEntries(data);
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
-
-    if (phase !== "finished") {
-      setError("Sesi belum selesai. Selesaikan countdown terlebih dahulu.");
-      return;
-    }
-
+    setSuccess("");
     setSaving(true);
+
     try {
-      const result = await saveEntry(name, origin, level, durationSeconds);
+      const result = editingId
+        ? await updateEntry(editingId, name, origin, level, durationSeconds)
+        : await saveEntry(name, origin, level, durationSeconds);
 
       if (result?.error) {
         setError(result.error);
@@ -620,24 +664,21 @@ export default function PlayPage() {
         return;
       }
 
-      const entries = Array.isArray(result.entries) ? result.entries : [];
-      const rank = entries.findIndex((item) => item.id === result.entry.id) + 1;
+      setSuccess(
+        editingId
+          ? `Data "${result.entry.name}" berhasil diperbarui.`
+          : `Peserta "${result.entry.name}" (${result.entry.origin}) berhasil ditambahkan ke hari ini. Level ${result.entry.level}, durasi ${formatDuration(result.entry.duration_seconds)}.`
+      );
 
-      setSavedInfo({
-        name: result.entry.name,
-        origin: result.entry.origin,
-        level: result.entry.level,
-        duration: result.entry.duration_seconds,
-        rank,
-        total: entries.length,
-      });
-      setPhase("saved");
-
-      try {
-        localStorage.removeItem(SESSION_STORAGE_KEY);
-      } catch {
-        // Abaikan.
+      if (editingId) {
+        await refreshEntries();
+      } else if (selectedDay !== "today") {
+        setSelectedDay("today");
+      } else {
+        await refreshEntries("today");
       }
+
+      resetForm();
     } catch {
       setError("Gagal menyimpan data. Periksa koneksi lalu coba lagi.");
     } finally {
@@ -645,458 +686,1149 @@ export default function PlayPage() {
     }
   }
 
-  function handlePlayAgain() {
-    clearTimer();
-    setPhase("form");
-    setName("");
-    setOrigin("");
-    setLevel("");
-    setStartTime(null);
-    setDurationSeconds(0);
-    setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS);
-    setSavedInfo(null);
+  function handleEdit(item) {
     setError("");
+    setSuccess("");
+    setEditingId(item.id);
+    setName(item.name);
+    setOrigin(item.origin || "");
+    setLevel(String(item.level));
+    setDurationSeconds(
+      Number(item.duration_seconds ?? DEFAULT_DURATION_SECONDS)
+    );
+  }
+
+  async function handleDelete(item) {
+    setError("");
+    setSuccess("");
     try {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      await deleteEntry(item.id);
+      await refreshEntries();
+      if (editingId === item.id) resetForm();
+      setSuccess(`Data "${item.name}" berhasil dihapus.`);
     } catch {
-      // Abaikan.
+      setError("Gagal menghapus data. Periksa koneksi lalu coba lagi.");
     }
   }
 
-  function handleCancel() {
-    if (
-      phase === "running" &&
-      !window.confirm("Sesi sedang berjalan. Yakin ingin membatalkan?")
-    ) {
-      return;
-    }
-    handlePlayAgain();
-  }
+  const dayLabel =
+    selectedDay === "today"
+      ? "Data Hari Ini"
+      : selectedDay === "yesterday"
+      ? "Data Kemarin"
+      : "Semua Data";
 
   return (
     <section>
       <div className="header-row">
         <div>
-          <h1>Main Sekarang</h1>
-          <p className="subtitle">Laboratorium Sistem Informasi</p>
+          <h1>Dashboard Admin</h1>
+          <p className="subtitle">Tambah dan kelola peserta tanpa timer</p>
         </div>
-        <Link href="/leaderboard" className="link-btn">
-          Lihat Leaderboard
-        </Link>
+        <div className="header-links">
+          <Link href="/play" className="link-btn">
+            Halaman Player
+          </Link>
+          <Link href="/leaderboard" className="link-btn">
+            Lihat Leaderboard
+          </Link>
+        </div>
       </div>
 
-      {phase === "form" && (
-        <form className="card" onSubmit={handleStart}>
-          <h2>Isi Identitas Peserta</h2>
-          <p className="play-note">
-            Isi nama dan asal sekolah/jurusan, lalu tekan mulai. Waktu bermain
-            maksimal 5 menit.
-          </p>
+      <div className="admin-note">
+        Timer 5 menit hanya berjalan di{" "}
+        <Link href="/play">halaman player</Link>. Peserta yang ditambahkan dari
+        dashboard otomatis tercatat sebagai peserta hari ini.
+      </div>
 
-          {error && <p className="msg-error">{error}</p>}
+      <div className="day-filter">
+        <label htmlFor="dashboard-day">Tampilkan peserta</label>
+        <select
+          id="dashboard-day"
+          value={selectedDay}
+          onChange={(event) => setSelectedDay(event.target.value)}
+        >
+          {DAY_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-          <div className="form-group">
-            <label htmlFor="player-name">Nama</label>
-            <input
-              id="player-name"
-              type="text"
-              placeholder="Contoh: Budi"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={60}
-              autoComplete="off"
-              required
-            />
-          </div>
+      <form className="card" onSubmit={handleSubmit}>
+        <h2>{editingId ? "Edit Data Peserta" : "Tambah Peserta"}</h2>
+        {error && <p className="msg-error">{error}</p>}
+        {success && <p className="msg-ok">{success}</p>}
 
-          <div className="form-group">
-            <label htmlFor="player-origin">Asal Sekolah / Jurusan</label>
-            <input
-              id="player-origin"
-              type="text"
-              placeholder="Contoh: SMKN 1 Surabaya / Sistem Informasi"
-              value={origin}
-              onChange={(event) => setOrigin(event.target.value)}
-              maxLength={100}
-              autoComplete="off"
-              required
-            />
-          </div>
-
-          <button type="submit" className="btn btn-primary btn-block">
-            Mulai (5 Menit)
-          </button>
-        </form>
-      )}
-
-      {phase === "running" && (
-        <div className="card play-card">
-          <div className="timer-header">
-            <span className="timer-label">Sisa waktu bermain</span>
-            <span className="badge-live">SESI BERJALAN</span>
-          </div>
-
-          <div
-            className={`timer-display ${
-              remainingSeconds <= 30 ? "timer-warning" : ""
-            }`}
-          >
-            {formatDuration(remainingSeconds)}
-          </div>
-
-          <p className="play-identity">
-            {name} &middot; {origin}
-          </p>
-          <p className="play-note">
-            Timer berjalan otomatis. Jangan tutup atau muat ulang halaman ini.
-          </p>
-
-          {error && <p className="msg-error">{error}</p>}
-
-          <div className="timer-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleFinishEarly}
-            >
-              Selesai &amp; Input Level
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleCancel}
-            >
-              Batalkan
-            </button>
-          </div>
+        <div className="form-group">
+          <label htmlFor="name">Nama Peserta</label>
+          <input
+            id="name"
+            type="text"
+            placeholder="Masukkan nama player..."
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={60}
+            required
+          />
         </div>
-      )}
 
-      {phase === "finished" && (
-        <form className="card" onSubmit={handleSubmit}>
-          <div className="timer-header">
-            <span className="timer-label">Sesi selesai</span>
-            <span className="badge-done">SESI SELESAI</span>
-          </div>
+        <div className="form-group">
+          <label htmlFor="origin">Asal (Sekolah / Jurusan)</label>
+          <input
+            id="origin"
+            type="text"
+            placeholder="Contoh: SMKN 1 Surabaya / Sistem Informasi"
+            value={origin}
+            onChange={(event) => setOrigin(event.target.value)}
+            maxLength={100}
+            required
+          />
+        </div>
 
-          <p className="play-result">
-            Waktu bermain: <strong>{formatDuration(durationSeconds)}</strong> (
-            {durationSeconds} detik)
-          </p>
-          <p className="play-identity">
-            {name} &middot; {origin}
-          </p>
-
-          {error && <p className="msg-error">{error}</p>}
-
-          <div className="form-group" style={{ marginTop: "16px" }}>
-            <label htmlFor="player-level">
-              Level tertinggi yang berhasil dilewati
-            </label>
+        <div className="form-grid">
+          <div className="form-group">
+            <label htmlFor="level">Level</label>
             <input
-              id="player-level"
+              id="level"
               type="number"
               min="1"
               step="1"
-              inputMode="numeric"
               placeholder="Contoh: 12"
               value={level}
               onChange={(event) => setLevel(event.target.value)}
               required
-              autoFocus
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="duration">Durasi (detik)</label>
+            <input
+              id="duration"
+              type="number"
+              min="0"
+              max="300"
+              step="1"
+              value={durationSeconds}
+              onChange={(event) =>
+                setDurationSeconds(Number(event.target.value))
+              }
+              required
             />
             <small className="help-text">
-              Masukkan angka level terakhir yang berhasil kamu lewati.
+              {formatDuration(durationSeconds)} — dipakai untuk tie-breaker.
             </small>
           </div>
-
-          <div className="action-row">
-            <button type="submit" className="btn" disabled={saving}>
-              {saving ? "Menyimpan..." : "Simpan ke Leaderboard"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleCancel}
-              disabled={saving}
-            >
-              Batal
-            </button>
-          </div>
-        </form>
-      )}
-
-      {phase === "saved" && savedInfo && (
-        <div className="card play-success">
-          <h2>Terima kasih, {savedInfo.name}!</h2>
-          <p>Data kamu sudah masuk ke leaderboard.</p>
-
-          <div className="play-success-grid">
-            <div>
-              <span>Level</span>
-              <strong>{savedInfo.level}</strong>
-            </div>
-            <div>
-              <span>Waktu</span>
-              <strong>{formatDuration(savedInfo.duration)}</strong>
-            </div>
-            <div>
-              <span>Peringkat</span>
-              <strong>
-                {savedInfo.rank > 0 ? `#${savedInfo.rank}` : "-"}
-              </strong>
-            </div>
-          </div>
-
-          <div className="action-row" style={{ marginTop: "16px" }}>
-            <Link href="/leaderboard" className="btn">
-              Lihat Leaderboard
-            </Link>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handlePlayAgain}
-            >
-              Pemain Berikutnya
-            </button>
-          </div>
         </div>
+
+        <div className="action-row">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving
+              ? "Menyimpan..."
+              : editingId
+              ? "Simpan Perubahan"
+              : "Tambah ke Leaderboard"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={resetForm}
+            disabled={saving}
+          >
+            {editingId ? "Batal Edit" : "Reset"}
+          </button>
+        </div>
+      </form>
+
+      <h2 className="section-title">
+        {dayLabel} ({entries.length})
+      </h2>
+
+      {loadingEntries ? (
+        <p className="empty-state">Memuat data peserta...</p>
+      ) : entries.length === 0 ? (
+        <p className="empty-state">
+          Belum ada peserta pada filter ini. Tambahkan peserta lewat form di
+          atas.
+        </p>
+      ) : (
+        <ol className="board-list">
+          {entries.map((item, index) => (
+            <li
+              key={item.id}
+              className="board-row"
+              style={{ backgroundColor: getRankColor(index) }}
+            >
+              <div className="board-left">
+                <span className="rank-badge">#{index + 1}</span>
+                <div className="player-meta">
+                  <span className="player-name">{item.name}</span>
+                  <span className="player-origin">{item.origin || "-"}</span>
+                </div>
+              </div>
+
+              <div className="board-right">
+                <div className="score-badge">
+                  <span className="player-level">Level {item.level}</span>
+                  <span className="player-time">
+                    ⏱ {formatDuration(item.duration_seconds)}
+                  </span>
+                </div>
+                <div className="action-row">
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() => handleEdit(item)}
+                    disabled={saving}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm btn-danger"
+                    onClick={() => handleDelete(item)}
+                    disabled={saving}
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
       )}
     </section>
   );
 }
 ```
 
-#### Catatan implementasi penting
+#### Catatan dashboard
 
-- Tombol **"Selesai & Input Level"** wajib ada. Tanpa tombol ini, tie-breaker durasi tidak akan pernah bekerja untuk halaman player (semua peserta mendapat 300 detik).
-- Jangan memindahkan pembacaan `localStorage` ke luar `useEffect`/event handler.
-- Jangan mengganti perhitungan timer dengan decrement state. Selalu pakai `getRemainingSeconds(startTime, Date.now())`.
-- Interval berjalan setiap **250 ms** agar transisi ke `00:00` tidak terlambat, tetapi angka yang ditampilkan tetap berubah per detik.
-- Saat `finishSession` dipanggil karena countdown habis, gunakan `startTime + 300000` sebagai `finishedAt` supaya durasi tepat 300 detik meskipun tab sempat tertidur.
-- `saveEntry` mengembalikan `{ error }` jika validasi server gagal. Selalu cek `result?.error` sebelum membaca `result.entry`.
+- `durationSeconds` default `300`. Admin boleh membiarkannya.
+- `formatDuration` tetap dipakai untuk menampilkan durasi di daftar admin dan helper text.
+- `getRankColor` tetap dipakai untuk warna baris di dashboard.
+- Tidak ada `useRef`, interval, atau state timer.
+- `resetForm()` tidak menghapus pesan `success`, sehingga notifikasi tetap terlihat setelah form direset.
+- `saving` mencegah double submit dan menonaktifkan tombol edit/hapus saat request berjalan.
+- Setelah menambah peserta, dashboard pindah ke filter "Hari Ini" jika sebelumnya berada di filter lain.
+- Setelah edit/hapus, daftar di-refresh sesuai filter yang sedang aktif.
 
 ---
 
-### 7.5 Ubah `app/globals.css`
+### 7.7 Ganti isi `app/leaderboard/page.js`
 
-Tambahkan blok berikut di **paling bawah** file. Jangan menghapus style yang sudah ada.
+Ganti seluruh isi file dengan kode berikut.
+
+```jsx
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { loadEntries } from "../../lib/leaderboard";
+import { formatDateLabel, getRelativeDayKey } from "../../lib/date";
+
+const DAY_TABS = [
+  { value: "today", label: "Hari Ini" },
+  { value: "yesterday", label: "Kemarin" },
+  { value: "all", label: "Semua" },
+];
+
+function getInitial(name) {
+  return String(name ?? "").trim().charAt(0).toUpperCase() || "?";
+}
+
+export default function LeaderboardPage() {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [selectedDay, setSelectedDay] = useState("today");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setEntries([]);
+    setLastUpdated(null);
+
+    async function refreshData() {
+      const data = await loadEntries(getRelativeDayKey(selectedDay));
+      if (!active) return;
+      setEntries(data);
+      setLoading(false);
+      setLastUpdated(new Date());
+    }
+
+    refreshData();
+    const interval = setInterval(refreshData, 10000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [selectedDay]);
+
+  const selectedDateKey = getRelativeDayKey(selectedDay);
+  const dayLabel =
+    selectedDay === "all"
+      ? "Semua Hari"
+      : formatDateLabel(selectedDateKey);
+
+  const podium = entries.slice(0, 3);
+  const rest = entries.slice(3);
+  const topLevel = entries.length > 0 ? entries[0].level : 0;
+  const topName = entries.length > 0 ? entries[0].name : "—";
+
+  const emptyTitle =
+    selectedDay === "today"
+      ? "Belum ada peserta hari ini"
+      : selectedDay === "yesterday"
+      ? "Belum ada peserta kemarin"
+      : "Belum ada peserta";
+
+  return (
+    <section className="leaderboard-page">
+      <header className="lb-hero">
+        <div className="lb-hero-content">
+          <span className="lb-eyebrow">LABORATORIUM SISTEM INFORMASI</span>
+          <h1>Leaderboard Game Stand</h1>
+          <p className="lb-hero-subtitle">
+            Cetak level tertinggi dan rebut posisi puncak.
+          </p>
+          <div className="lb-hero-actions">
+            <Link href="/play" className="btn lb-cta">
+              Main Sekarang
+            </Link>
+            <Link href="/dashboard" className="lb-ghost-btn">
+              Kelola (Admin)
+            </Link>
+          </div>
+        </div>
+
+        <div className="lb-hero-stats">
+          <div className="lb-stat">
+            <strong>{entries.length}</strong>
+            <span>Peserta</span>
+          </div>
+          <div className="lb-stat">
+            <strong>{topLevel}</strong>
+            <span>Level Tertinggi</span>
+          </div>
+          <div className="lb-stat">
+            <strong className="lb-stat-name">{topName}</strong>
+            <span>Puncak Saat Ini</span>
+          </div>
+        </div>
+      </header>
+
+      <div className="lb-day-header">
+        <div className="lb-tabs" role="tablist" aria-label="Filter hari">
+          {DAY_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={selectedDay === tab.value}
+              className={`lb-tab ${
+                selectedDay === tab.value ? "lb-tab-active" : ""
+              }`}
+              onClick={() => setSelectedDay(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <p className="lb-day-label">{dayLabel}</p>
+      </div>
+
+      <div className="lb-meta">
+        <span className="lb-live-dot" />
+        <span>Diperbarui otomatis setiap 10 detik</span>
+        {lastUpdated && (
+          <span className="lb-updated">
+            {lastUpdated.toLocaleTimeString("id-ID", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        )}
+      </div>
+
+      {loading && entries.length === 0 ? (
+        <div className="lb-skeleton" aria-label="Memuat leaderboard">
+          <div className="lb-skeleton-card" />
+          <div className="lb-skeleton-card" />
+          <div className="lb-skeleton-card" />
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="lb-empty">
+          <span className="lb-empty-icon">🏆</span>
+          <h2>{emptyTitle}</h2>
+          <p>Jadilah yang pertama mencetak skor di leaderboard.</p>
+          {selectedDay === "yesterday" ? (
+            <button
+              type="button"
+              className="btn lb-cta"
+              onClick={() => setSelectedDay("today")}
+            >
+              Lihat Hari Ini
+            </button>
+          ) : (
+            <Link href="/play" className="btn lb-cta">
+              Main Sekarang
+            </Link>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="lb-podium">
+            {podium.map((item, index) => (
+              <article
+                key={item.id}
+                className={`lb-podium-card podium-${index + 1}`}
+              >
+                <span className="lb-medal">{index + 1}</span>
+                <div className="lb-avatar">{getInitial(item.name)}</div>
+                <div className="lb-podium-info">
+                  <h2 className="lb-podium-name">{item.name}</h2>
+                  <p className="lb-podium-origin">{item.origin || "-"}</p>
+                </div>
+                <span className="lb-level-chip">Level {item.level}</span>
+              </article>
+            ))}
+          </div>
+
+          {rest.length > 0 && (
+            <ol className="lb-list">
+              {rest.map((item, index) => (
+                <li key={item.id} className="lb-row">
+                  <span className="lb-rank">#{index + 4}</span>
+                  <div className="lb-avatar lb-avatar-sm">
+                    {getInitial(item.name)}
+                  </div>
+                  <div className="lb-player">
+                    <span className="lb-name">{item.name}</span>
+                    <span className="lb-origin">{item.origin || "-"}</span>
+                  </div>
+                  <span className="lb-level-pill">Level {item.level}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+
+      <p className="lb-footnote">
+        Peringkat: level tertinggi, lalu waktu bermain tercepat.
+      </p>
+    </section>
+  );
+}
+```
+
+#### Catatan leaderboard
+
+- `formatDuration` dan `getRankColor` **tidak lagi diimpor**. Durasi tidak ditampilkan.
+- `selectedDay` mengontrol tab dan request API.
+- Saat tab berubah, daftar lama dikosongkan dan skeleton ditampilkan agar tidak menampilkan data hari yang salah.
+- `getRelativeDayKey(selectedDay)` dihitung ulang di dalam `refreshData`, sehingga pergantian hari saat halaman terbuka tetap tertangani pada refresh berikutnya.
+- `entries.slice(0, 3)` untuk podium; `entries.slice(3)` untuk daftar #4 dan seterusnya.
+- `active` flag mencegah `setState` setelah komponen unmount.
+- `lastUpdated` diisi dari `Date` di client, jadi tidak menyebabkan hydration mismatch.
+- Tab "Kemarin" yang kosong menampilkan tombol "Lihat Hari Ini" agar pengunjung tidak bingung.
+
+---
+
+### 7.8 Tambahkan CSS di `app/globals.css`
+
+Tambahkan blok berikut di **paling bawah** file. Jangan menghapus CSS lama, terutama CSS timer yang dipakai `/play`.
 
 ```css
-/* ===== Halaman Player (/play) ===== */
-.header-links {
+/* ===== Dashboard admin tanpa timer ===== */
+.admin-note {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
+.admin-note a {
+  color: inherit;
+  font-weight: 700;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.empty-state {
+  padding: 24px;
+  text-align: center;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+}
+
+.day-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.day-filter select {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+}
+
+/* ===== Leaderboard publik ===== */
+.leaderboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.lb-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  padding: 26px 22px 20px;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(99, 102, 241, 0.45), transparent 45%),
+    radial-gradient(circle at 100% 100%, rgba(14, 165, 233, 0.28), transparent 40%),
+    linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #312e81 100%);
+  color: #f8fafc;
+  box-shadow: 0 18px 45px -22px rgba(15, 23, 42, 0.75);
+}
+
+.lb-hero::after {
+  content: "";
+  position: absolute;
+  right: -60px;
+  bottom: -110px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.lb-hero-content {
+  position: relative;
+  z-index: 1;
+}
+
+.lb-eyebrow {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #c7d2fe;
+  margin-bottom: 8px;
+}
+
+.lb-hero h1 {
+  font-size: 1.75rem;
+  line-height: 1.15;
+  margin: 0 0 8px;
+  color: #ffffff;
+}
+
+.lb-hero-subtitle {
+  font-size: 0.95rem;
+  color: #cbd5e1;
+  max-width: 34ch;
+}
+
+.lb-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.lb-cta {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  color: #1f2937;
+  box-shadow: 0 10px 24px -10px rgba(245, 158, 11, 0.9);
+}
+
+.lb-cta:hover {
+  background: linear-gradient(135deg, #fbbf24, #fb923c);
+}
+
+.lb-ghost-btn {
+  color: #e2e8f0;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 9px 14px;
+  border-radius: 9px;
+  border: 1px solid rgba(226, 232, 240, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(4px);
+}
+
+.lb-ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.lb-hero-stats {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(226, 232, 240, 0.18);
+}
+
+.lb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lb-stat strong {
+  font-size: 1.25rem;
+  color: #ffffff;
+}
+
+.lb-stat-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-stat span {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a5b4fc;
+}
+
+.lb-day-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lb-tabs {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
-.play-card {
-  text-align: center;
+.lb-tab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.play-identity {
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 4px;
+.lb-tab:hover {
+  border-color: #c7d2fe;
+  color: #4338ca;
 }
 
-.play-note {
+.lb-tab-active {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 8px 18px -10px rgba(79, 70, 229, 0.9);
+}
+
+.lb-day-label {
   font-size: 0.85rem;
   color: #64748b;
-  margin: 8px 0 16px;
 }
 
-.play-result {
-  font-size: 1rem;
-  margin: 8px 0 4px;
-  color: #166534;
-}
-
-.timer-warning {
-  color: #dc2626;
-}
-
-.btn-primary {
-  background: #2563eb;
-}
-
-.btn-primary:hover {
-  background: #1d4ed8;
-}
-
-.btn-block {
-  width: 100%;
-}
-
-a.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-}
-
-.play-success {
-  text-align: center;
-}
-
-.play-success-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.play-success-grid > div {
-  background: #f1f5f9;
-  border-radius: 8px;
-  padding: 12px 8px;
+.lb-meta {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.play-success-grid span {
-  font-size: 0.75rem;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  font-size: 0.8rem;
   color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
-.play-success-grid strong {
-  font-size: 1.15rem;
+.lb-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15);
+  animation: lb-pulse 1.8s infinite;
 }
 
-.play-success .action-row {
+@keyframes lb-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+.lb-updated {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-podium {
+  display: flex;
+  align-items: flex-end;
   justify-content: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
+
+.lb-podium-card {
+  position: relative;
+  flex: 1 1 170px;
+  max-width: 200px;
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 22px 12px 16px;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  box-shadow: 0 16px 32px -24px rgba(15, 23, 42, 0.55);
+}
+
+.lb-podium-card.podium-1 {
+  order: 2;
+  min-height: 216px;
+  border-color: #fcd34d;
+  background: linear-gradient(180deg, #fffbeb, #fef3c7);
+  box-shadow: 0 22px 40px -24px rgba(245, 158, 11, 0.8);
+}
+
+.lb-podium-card.podium-2 {
+  order: 1;
+  border-color: #cbd5e1;
+  background: linear-gradient(180deg, #ffffff, #f1f5f9);
+}
+
+.lb-podium-card.podium-3 {
+  order: 3;
+  border-color: #fdba74;
+  background: linear-gradient(180deg, #fff7ed, #ffedd5);
+}
+
+.lb-medal {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #ffffff;
+  background: #64748b;
+  box-shadow: 0 4px 10px -4px rgba(15, 23, 42, 0.6);
+}
+
+.podium-1 .lb-medal {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.podium-2 .lb-medal {
+  background: linear-gradient(135deg, #94a3b8, #64748b);
+}
+
+.podium-3 .lb-medal {
+  background: linear-gradient(135deg, #fb923c, #ea580c);
+}
+
+.lb-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  color: #ffffff;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.5);
+  margin-bottom: 10px;
+}
+
+.podium-1 .lb-avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 1.3rem;
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+}
+
+.lb-podium-info {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.lb-podium-name {
+  font-size: 1rem;
+  margin: 0 0 2px;
+  color: #0f172a;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-podium-origin {
+  font-size: 0.75rem;
+  color: #64748b;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-level-chip {
+  margin-top: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #ffffff;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  box-shadow: 0 8px 16px -10px rgba(79, 70, 229, 0.9);
+  flex-shrink: 0;
+}
+
+.lb-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.lb-row:hover {
+  transform: translateY(-1px);
+  border-color: #c7d2fe;
+  box-shadow: 0 14px 30px -24px rgba(30, 41, 59, 0.7);
+}
+
+.lb-rank {
+  min-width: 38px;
+  font-weight: 800;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-avatar-sm {
+  width: 38px;
+  height: 38px;
+  font-size: 0.9rem;
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+.lb-player {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.lb-name {
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-origin {
+  font-size: 0.78rem;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-level-pill {
+  flex-shrink: 0;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #3730a3;
+  background: #e0e7ff;
+}
+
+.lb-skeleton {
+  display: flex;
+  gap: 10px;
+}
+
+.lb-skeleton-card {
+  flex: 1;
+  height: 190px;
+  border-radius: 18px;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
+  background-size: 400% 100%;
+  animation: lb-shimmer 1.4s ease infinite;
+}
+
+@keyframes lb-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.lb-empty {
+  text-align: center;
+  padding: 40px 20px;
+  border-radius: 18px;
+  border: 1px dashed #cbd5e1;
+  background: #ffffff;
+}
+
+.lb-empty-icon {
+  font-size: 2.2rem;
+}
+
+.lb-empty h2 {
+  margin-top: 8px;
+}
+
+.lb-empty p {
+  color: #64748b;
+  margin-bottom: 16px;
+}
+
+.lb-footnote {
+  text-align: center;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  padding-bottom: 8px;
+}
+
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lb-hero {
+    padding: 22px 18px 18px;
+    border-radius: 18px;
+  }
+
+  .lb-hero h1 {
+    font-size: 1.45rem;
+  }
+
+  .lb-hero-stats {
+    gap: 6px;
+  }
+
+  .lb-stat strong {
+    font-size: 1.05rem;
+  }
+
+  .lb-stat span {
+    font-size: 0.62rem;
+  }
+
+  .lb-podium {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lb-podium-card,
+  .lb-podium-card.podium-1 {
+    order: 0;
+    max-width: none;
+    min-height: 0;
+    flex-direction: row;
+    text-align: left;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 14px 16px 16px;
+  }
+
+  .lb-podium-card .lb-medal {
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+  }
+
+  .lb-podium-card .lb-avatar {
+    margin-left: 26px;
+    margin-bottom: 0;
+  }
+
+  .lb-podium-card .lb-podium-info {
+    align-items: flex-start;
+  }
+
+  .lb-podium-card .lb-level-chip {
+    margin-top: 0;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  .lb-podium-name,
+  .lb-podium-origin {
+    white-space: normal;
+  }
+
+  .lb-skeleton {
+    flex-direction: column;
+  }
+
+  .lb-skeleton-card {
+    height: 76px;
+  }
+}
 ```
 
-Efek samping yang aman:
+#### Catatan CSS
 
-- `.btn-primary` juga dipakai tombol "Mulai Sesi (5 Menit)" di dashboard; tombol itu akan berwarna biru. Ini perbaikan visual, bukan regresi.
-- `a.btn` membuat link yang memakai class `.btn` (tombol "Lihat Leaderboard") tampil sebagai tombol.
-- `.header-links` dipakai pada perubahan navigasi di Bagian 7.6 dan 7.7.
+- `.lb-cta` dipakai bersama `.btn`; style `a.btn` dari PR #4 membuat link tampil sebagai tombol. Jika branch belum punya `a.btn`, tambahkan:
+
+  ```css
+  a.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  ```
+
+- `.lb-hero h1` sengaja menimpa margin global `h1`.
+- Podium memakai `order` agar juara 1 tampil di tengah pada desktop. Di mobile, `order: 0` membuat urutan kembali 1 → 2 → 3.
+- Semua class baru berprefix `lb-` atau khusus dashboard (`.admin-note`, `.form-grid`, `.day-filter`) sehingga tidak mengganggu `/play`.
+- Jangan menghapus `.timer-*`, `.badge-*`, `.play-*`; halaman `/play` masih membutuhkannya.
 
 ---
 
-### 7.6 Ubah kecil `app/leaderboard/page.js`
-
-Cari bagian header:
-
-```jsx
-        <Link href="/dashboard" className="link-btn">
-          Kelola (Admin)
-        </Link>
-```
-
-Ganti menjadi:
-
-```jsx
-        <div className="header-links">
-          <Link href="/play" className="link-btn">
-            Main
-          </Link>
-          <Link href="/dashboard" className="link-btn">
-            Kelola (Admin)
-          </Link>
-        </div>
-```
-
-Tidak ada perubahan logika. Polling 10 detik yang sudah ada tetap dipertahankan.
-
----
-
-### 7.7 Ubah kecil `app/dashboard/page.js`
-
-Cari bagian header:
-
-```jsx
-        <Link href="/leaderboard" className="link-btn">
-          Lihat Leaderboard Public
-        </Link>
-```
-
-Ganti menjadi:
-
-```jsx
-        <div className="header-links">
-          <Link href="/play" className="link-btn">
-            Halaman Player
-          </Link>
-          <Link href="/leaderboard" className="link-btn">
-            Lihat Leaderboard Public
-          </Link>
-        </div>
-```
-
-Selain itu **jangan mengubah dashboard**. Timer, edit, dan hapus yang sudah ada harus tetap berfungsi.
-
----
-
-### 7.8 File yang tidak boleh diubah pada task ini
+### 7.9 File yang tidak boleh diubah
 
 | File | Alasan |
 | :--- | :--- |
-| `app/api/leaderboard/route.js` | Schema dan validasi sudah lengkap. |
-| `lib/leaderboard.js` | `formatDuration`, `parseEntry`, `saveEntry` sudah sesuai. |
-| `lib/leaderboard.test.mjs` | Test lama harus tetap lulus tanpa perubahan. |
-| `app/page.js` | Tetap redirect ke `/leaderboard`. |
+| `app/play/page.js` | Timer dan alur player tetap sama. |
+| `lib/session.js` | Hanya dipakai `/play`. |
+| `lib/leaderboard.test.mjs` | Test lama harus tetap lulus. |
+| `lib/session.test.mjs` | Test lama harus tetap lulus. |
+| `app/layout.js` | Container tetap 640 px. |
 | `types/leaderboard.ts` | Tidak ada field baru. |
 
-Jika ada bug di file-file tersebut, buat issue terpisah. Jangan campur dengan fitur ini.
+**Catatan:** berbeda dari rencana sebelumnya, `app/api/leaderboard/route.js` dan `lib/leaderboard.js` **memang berubah** pada rencana ini karena filter hari.
 
 ---
 
 ## 8. Langkah Eksekusi (Checklist Berurutan)
 
-Kerjakan dari atas ke bawah. Jangan melompat.
-
-### Langkah 1 — Pastikan branch bersih
+### Langkah 1 — Pastikan basis branch benar
 
 ```bash
 git checkout main
 git pull
-git status
 ```
 
-Pastikan working tree bersih dan berada di commit terbaru.
+Jika PR #4 belum di-merge, buat branch dari `feature/halaman-user`:
 
-### Langkah 2 — Buat helper timer
+```bash
+git checkout feature/halaman-user
+git pull
+git checkout -b feature/dashboard-leaderboard-redesign
+```
 
-1. Buat `lib/session.js` sesuai Bagian 7.1.
-2. Buat `lib/session.test.mjs` sesuai Bagian 7.2.
+Jika PR #4 sudah di-merge, cukup buat branch baru dari `main`:
+
+```bash
+git checkout -b feature/dashboard-leaderboard-redesign
+```
+
+### Langkah 2 — Buat helper tanggal
+
+1. Buat `lib/date.js` sesuai Bagian 7.1.
+2. Buat `lib/date.test.mjs` sesuai Bagian 7.2.
 3. Ubah script `test` di `package.json` sesuai Bagian 7.3.
 
-### Langkah 3 — Jalankan unit test
+### Langkah 3 — Jalankan test helper tanggal
 
 ```bash
 npm test
 ```
 
-Yang diharapkan:
+Harus lulus **12 test**: 3 leaderboard + 3 session + 6 date.
 
-- 3 test lama di `lib/leaderboard.test.mjs` **PASS**.
-- 3 test baru di `lib/session.test.mjs` **PASS**.
-- Total 6 test lulus, 0 gagal.
+### Langkah 4 — Ubah `lib/leaderboard.js`
 
-Jika gagal, perbaiki helper dulu sebelum lanjut. Jangan menulis halaman di atas logika timer yang belum teruji.
+Ubah `loadEntries` sesuai Bagian 7.4.
 
-### Langkah 4 — Tambahkan CSS
+### Langkah 5 — Ubah API route
 
-Tambahkan blok CSS dari Bagian 7.5 ke bagian bawah `app/globals.css`.
+Ikuti Bagian 7.5:
 
-### Langkah 5 — Buat halaman player
+1. Tambah import `getDayRange` dan `isValidDateKey`.
+2. Ganti `listEntries`.
+3. Ganti `GET`.
+4. Tambah index `created_at`.
 
-Buat `app/play/page.js` sesuai Bagian 7.4.
+### Langkah 6 — Ganti dashboard
 
-### Langkah 6 — Tambahkan navigasi
+Ganti seluruh isi `app/dashboard/page.js` dengan kode Bagian 7.6.
 
-1. Ubah header `app/leaderboard/page.js` sesuai Bagian 7.6.
-2. Ubah header `app/dashboard/page.js` sesuai Bagian 7.7.
+### Langkah 7 — Ganti leaderboard
 
-### Langkah 7 — Jalankan dev server
+Ganti seluruh isi `app/leaderboard/page.js` dengan kode Bagian 7.7.
+
+### Langkah 8 — Tambahkan CSS
+
+Tambahkan blok CSS Bagian 7.8 di paling bawah `app/globals.css`.
+
+### Langkah 9 — Jalankan dev server
 
 ```bash
 npm run dev
@@ -1104,28 +1836,30 @@ npm run dev
 
 Buka:
 
-- `http://localhost:3000/play`
-- `http://localhost:3000/leaderboard`
 - `http://localhost:3000/dashboard`
+- `http://localhost:3000/leaderboard`
+- `http://localhost:3000/play`
 
-### Langkah 8 — Uji manual
+### Langkah 10 — Uji manual
 
-Ikuti skenario di Bagian 9.2. Jangan hanya mengandalkan unit test; timer dan `localStorage` harus diuji di browser.
+Ikuti skenario Bagian 9.3, termasuk uji data kemarin memakai SQL di Bagian 9.4.
 
-### Langkah 9 — Build production
+### Langkah 11 — Build production
 
 ```bash
 npm run build
 ```
 
-Pastikan tidak ada error kompilasi JSX, import, atau route baru.
+Pastikan `/dashboard`, `/leaderboard`, dan `/play` berhasil dikompilasi.
 
-### Langkah 10 — Review akhir
+### Langkah 12 — Review akhir
 
-- `git diff` hanya menyentuh file di Bagian 6.
-- Tidak ada `console.log` debug yang tertinggal.
-- Tidak ada perubahan pada `app/api/leaderboard/route.js`.
-- Semua Acceptance Criteria di Bagian 10 terpenuhi.
+- Tidak ada sisa state timer di dashboard.
+- Tidak ada `formatDuration` atau `player-time-badge` di leaderboard.
+- Filter hari berfungsi di dashboard dan leaderboard.
+- API `?date=` berfungsi dan validasi tanggal bekerja.
+- Halaman `/play` tidak berubah perilakunya.
+- Semua Acceptance Criteria Bagian 10 terpenuhi.
 
 ---
 
@@ -1139,118 +1873,190 @@ npm test
 
 Cakupan:
 
-- `getElapsedSeconds` menghitung selisih, membulatkan ke bawah, dan menjepit 0–300.
-- `getRemainingSeconds` menghasilkan 300 → 0.
-- `parseStoredSession` menolak JSON rusak, nama/origin kosong, dan `startTime` tidak valid.
-- Test lama leaderboard tetap lulus.
+- 3 test leaderboard lama.
+- 3 test session lama.
+- 6 test tanggal baru:
+  - `getDateKey` di batas tengah malam WIB,
+  - `getYesterdayKey` pada pergantian bulan/tahun,
+  - `getRelativeDayKey`,
+  - `isValidDateKey`,
+  - `getDayRange`,
+  - `formatDateLabel`.
 
-### 9.2 Uji fungsional manual
+Total: **12 test, 0 gagal**.
 
-> **Tips menguji countdown tanpa menunggu 5 menit:**
-> 1. Mulai sesi di `/play`.
-> 2. Buka DevTools → Application → Local Storage.
-> 3. Cari key `lab-sisfo:active-session`.
-> 4. Ubah `startTime` menjadi `Date.now() - 295000` (5 detik tersisa).
-> 5. Refresh halaman. Countdown akan lanjut di sekitar `00:05` lalu habis otomatis.
->
-> Cara ini sekaligus menguji fitur pemulihan sesi. Tidak perlu mengubah kode.
+### 9.2 Uji API dengan curl
+
+```bash
+# Semua entri (backward compatible)
+curl "http://localhost:3000/api/leaderboard"
+
+# Entri hari ini (gunakan tanggal WIB yang benar)
+TZ=Asia/Jakarta date +%F
+curl "http://localhost:3000/api/leaderboard?date=$(TZ=Asia/Jakarta date +%F)"
+
+# Tanggal tidak valid harus 400
+curl -i "http://localhost:3000/api/leaderboard?date=2026-02-31"
+```
+
+Yang diharapkan:
+
+- Tanpa `date` → `200` dan `{ entries, date: null }`.
+- Dengan `date` valid → `200` dan hanya entri pada tanggal tersebut.
+- Dengan `date` tidak valid → `400 { error: "Format tanggal harus YYYY-MM-DD." }`.
+
+### 9.3 Uji fungsional manual
 
 | No | Skenario | Langkah | Hasil yang diharapkan |
 | :-: | :--- | :--- | :--- |
-| 1 | Validasi form | Buka `/play`, klik Mulai tanpa mengisi apa pun | Pesan "Nama wajib diisi..." muncul; tidak pindah phase |
-| 2 | Validasi origin | Isi nama saja, klik Mulai | Pesan asal wajib diisi muncul |
-| 3 | Mulai sesi | Isi nama & asal, klik Mulai | Form hilang, countdown `05:00` tampil, badge "SESI BERJALAN" |
-| 4 | Countdown berjalan | Tunggu 5 detik | Tampilan menjadi `04:55` |
-| 5 | Early finish | Setelah ±10 detik, klik "Selesai & Input Level" | Phase `finished`, durasi ±`00:10`, form level muncul |
-| 6 | Batas early finish | Klik "Selesai & Input Level" sebelum 5 detik | Pesan minimal 5 detik muncul; tetap running |
-| 7 | Countdown habis | Gunakan trik `startTime` di atas | Otomatis pindah ke `finished`, durasi `05:00` (300 detik) |
-| 8 | Simpan sukses | Isi level 12, klik Simpan | Phase `saved`, muncul level, waktu, dan peringkat |
-| 9 | Data masuk | Buka `/leaderboard` | Entri baru muncul (maks. 10 detik karena polling) |
-| 10 | Refresh saat running | Mulai sesi, refresh setelah ±10 detik | Countdown lanjut dari sisa waktu yang benar, bukan reset ke `05:00` |
-| 11 | Refresh saat finished | Early finish, lalu refresh | Tetap di form level dengan durasi yang sama |
-| 12 | Pemain berikutnya | Dari phase `saved`, klik "Pemain Berikutnya" | Kembali ke form kosong |
-| 13 | Batal saat running | Klik Batalkan, setujui konfirmasi | Kembali ke form kosong, `localStorage` dibersihkan |
-| 14 | Double submit | Klik Simpan dua kali cepat | Tombol disabled saat menyimpan; tidak ada baris ganda |
-| 15 | Tie-breaker | Simpan dua peserta level sama, durasi 20 detik dan 60 detik | Peserta 20 detik berada di atas |
-| 16 | Regresi dashboard | Buka `/dashboard`, jalankan timer admin, simpan | Dashboard tetap berfungsi seperti sebelumnya |
-| 17 | Regresi leaderboard | Buka `/leaderboard` | Daftar, warna rank, dan durasi `MM:SS` tetap tampil |
-| 18 | Mobile | Buka `/play` di lebar ±375 px | Timer besar, tombol tidak terpotong, form nyaman dipakai |
+| 1 | Dashboard tanpa timer | Buka `/dashboard` | Tidak ada countdown, tombol mulai, atau tombol stop |
+| 2 | Filter default dashboard | Buka `/dashboard` | Filter "Hari Ini" aktif; daftar hanya peserta hari ini |
+| 3 | Tambah peserta langsung | Isi nama, asal, level 15; biarkan durasi 300; klik tambah | Peserta langsung muncul di daftar hari ini; tidak perlu menunggu timer |
+| 4 | Tambah saat filter Kemarin | Pilih "Kemarin", lalu tambah peserta | Setelah simpan, filter otomatis pindah ke "Hari Ini" dan peserta baru terlihat |
+| 5 | Durasi default | Perhatikan input durasi saat form kosong | Nilai `300`, helper `05:00` |
+| 6 | Tambah dengan durasi kustom | Isi durasi 90, simpan | Data tersimpan dengan durasi `01:30` |
+| 7 | Validasi nama | Kosongkan nama, submit | Pesan error muncul; data tidak tersimpan |
+| 8 | Validasi asal | Kosongkan asal, submit | Pesan error muncul |
+| 9 | Validasi level | Isi level 0, submit | Pesan "Level harus berupa angka bulat minimal 1." |
+| 10 | Validasi durasi | Isi durasi 301, submit | Pesan durasi 0–300 muncul |
+| 11 | Edit peserta | Klik Edit pada baris | Form terisi nama, asal, level, durasi |
+| 12 | Simpan edit | Ubah level/durasi, simpan | Baris berubah dan urutan menyesuaikan; tetap di filter yang sama |
+| 13 | Batal edit | Klik "Batal Edit" | Form kembali kosong, data tidak berubah |
+| 14 | Hapus peserta | Klik Hapus | Baris hilang dari dashboard dan leaderboard |
+| 15 | Leaderboard default | Buka `/leaderboard` | Tab "Hari Ini" aktif; hanya peserta hari ini yang tampil |
+| 16 | Tab Kemarin | Klik "Kemarin" | Hanya peserta kemarin yang tampil; label tanggal kemarin muncul |
+| 17 | Tab Semua | Klik "Semua" | Semua peserta tampil; label "Semua Hari" |
+| 18 | Leaderboard tanpa durasi | Buka `/leaderboard` | Tidak ada teks `⏱` atau `MM:SS` per peserta |
+| 19 | Podium | Pastikan ada minimal 3 peserta di hari yang dipilih | Tiga besar tampil sebagai kartu podium; juara 1 di tengah pada desktop |
+| 20 | Daftar #4+ | Pastikan ada lebih dari 3 peserta | Peringkat 4 dan seterusnya tampil di daftar kartu |
+| 21 | Statistik hero | Perhatikan hero | Jumlah peserta, level tertinggi, dan nama puncak sesuai hari yang dipilih |
+| 22 | Auto-refresh per tab | Tambah peserta dari dashboard, tunggu 10 detik di leaderboard | Tab aktif ter-update tanpa reload |
+| 23 | Loading state | Pindah tab dengan koneksi lambat | Skeleton tampil, bukan data hari sebelumnya |
+| 24 | Empty state hari ini | Pastikan tidak ada peserta hari ini | "Belum ada peserta hari ini" + CTA "Main Sekarang" |
+| 25 | Empty state kemarin | Pilih "Kemarin" saat kosong | "Belum ada peserta kemarin" + tombol "Lihat Hari Ini" |
+| 26 | Mobile | Buka `/leaderboard` di lebar 375 px | Hero, tab, podium, dan daftar tidak terpotong; podium vertikal |
+| 27 | Regresi `/play` | Buka `/play`, jalankan sesi | Countdown, early finish, dan simpan tetap berfungsi; peserta masuk hari ini |
+| 28 | Regresi tie-breaker | Dua peserta level sama, durasi berbeda | Durasi lebih kecil tetap di atas |
+| 29 | Tanpa parameter date | `curl /api/leaderboard` | Semua entri tetap tampil seperti sebelumnya |
 
-### 9.3 Uji data langsung ke API (opsional)
+### 9.4 Membuat data "kemarin" untuk pengujian
 
-Untuk memastikan API tetap menerima payload halaman baru:
+Jangan mengubah data production. Gunakan database/branch Neon test, atau buat entri khusus lalu hapus setelah selesai.
 
-```bash
-curl -X POST http://localhost:3000/api/leaderboard \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Tes Player","origin":"SMK Tes","level":7,"duration_seconds":42}'
+```sql
+-- Jalankan di Neon SQL Editor
+INSERT INTO leaderboard_entries
+  (id, name, origin, level, duration_seconds, created_at)
+VALUES
+  ('test-kemarin', 'Test Kemarin', 'SMK Test', 9, 120, NOW() - INTERVAL '1 day');
 ```
 
-Response harus `201` dan berisi `entry` dengan data yang dikirim.
+Setelah selesai:
+
+```sql
+DELETE FROM leaderboard_entries WHERE id = 'test-kemarin';
+```
+
+Verifikasi:
+
+- Tab "Hari Ini" tidak menampilkan `Test Kemarin`.
+- Tab "Kemarin" menampilkan `Test Kemarin`.
+- Dashboard filter "Kemarin" menampilkan `Test Kemarin`.
+- Dashboard filter "Semua" juga menampilkannya.
 
 ---
 
 ## 10. Acceptance Criteria
 
-Task dinyatakan selesai jika **semua** poin berikut terpenuhi:
-
-- [ ] Route `/play` dapat diakses tanpa login.
-- [ ] Form meminta nama dan asal; input berisi spasi saja ditolak.
-- [ ] Setelah klik Mulai, form identitas hilang dan countdown `05:00` tampil.
-- [ ] Countdown berjalan mundur dan otomatis berhenti di `00:00`.
-- [ ] Peserta dapat menyelesaikan lebih awal dengan tombol "Selesai & Input Level" (minimal 5 detik).
-- [ ] Durasi yang disimpan adalah waktu bermain sebenarnya (bukan selalu 300).
-- [ ] Input level hanya muncul di phase `finished`.
-- [ ] Level divalidasi sebagai bilangan bulat ≥ 1 (validasi server tetap berlaku).
-- [ ] Data tersimpan lewat `POST /api/leaderboard` yang sudah ada.
-- [ ] Layar sukses menampilkan level, waktu `MM:SS`, dan peringkat.
-- [ ] Refresh saat running memulihkan sisa waktu dengan benar.
-- [ ] Refresh saat finished mempertahankan durasi dan form level.
-- [ ] `localStorage` dibersihkan setelah simpan sukses atau reset.
-- [ ] `/leaderboard` dan `/dashboard` tetap berfungsi.
-- [ ] `npm test` lulus 6 test.
-- [ ] `npm run build` selesai tanpa error.
-- [ ] Tidak ada perubahan schema database atau API.
+- [ ] Dashboard tidak lagi menampilkan countdown, tombol mulai, atau tombol stop.
+- [ ] Admin dapat menambahkan peserta langsung dari dashboard.
+- [ ] Form dashboard memiliki nama, asal, level, dan durasi (default 300).
+- [ ] Edit dan hapus peserta tetap berfungsi.
+- [ ] `saveEntry`, `updateEntry`, dan `deleteEntry` tetap memakai API yang ada.
+- [ ] Dashboard memiliki filter Hari Ini / Kemarin / Semua.
+- [ ] Leaderboard tidak menampilkan durasi per peserta.
+- [ ] Leaderboard memiliki tab Hari Ini / Kemarin / Semua dengan default Hari Ini.
+- [ ] Leaderboard menampilkan hero, statistik, podium 3 besar, dan daftar peringkat 4+.
+- [ ] Label tanggal/hari tampil sesuai tab yang dipilih.
+- [ ] Filter hari menggunakan zona waktu Asia/Jakarta.
+- [ ] API mendukung `GET /api/leaderboard?date=YYYY-MM-DD`.
+- [ ] Tanpa parameter `date`, API tetap mengembalikan semua entri.
+- [ ] Tanggal tidak valid menghasilkan `400`.
+- [ ] Index `created_at` ditambahkan di `ensureSchema`.
+- [ ] Peserta baru dari dashboard selalu masuk hari ini dan dashboard berpindah ke filter Hari Ini.
+- [ ] Leaderboard tetap auto-refresh setiap 10 detik untuk tab aktif.
+- [ ] Loading skeleton dan empty state tampil sesuai kondisi.
+- [ ] Tampilan nyaman di lebar 375 px dan desktop.
+- [ ] Halaman `/play` dan countdown tetap berfungsi.
+- [ ] Aturan ranking tidak berubah.
+- [ ] Tidak ada perubahan skema database (tidak ada kolom baru).
+- [ ] `npm test` lulus 12/12.
+- [ ] `npm run build` sukses.
+- [ ] Tidak ada dependency baru.
 
 ---
 
-## 11. Pitfalls yang Sering Terjadi (Baca Sebelum Debugging)
+## 11. Pitfalls yang Sering Terjadi
 
-1. **`localStorage is not defined`**
-   Jangan akses `localStorage` saat render atau di initializer `useState`. Pindahkan ke `useEffect`/event handler.
+1. **Menggunakan zona waktu perangkat**
+   Jangan memakai `new Date(created_at).toDateString()` atau `getDate()` mentah untuk grouping. Perangkat pengunjung bisa berbeda zona waktu. Gunakan `getDateKey`/`getRelativeDayKey` dari `lib/date.js`.
 
-2. **Timer terasa lambat atau melompat**
-   Jangan decrement state. Selalu hitung dari `startTime` dengan `Date.now()`.
+2. **Lupa mengirim `date` ke API**
+   `loadEntries(dateKey)` harus menerima date key. Jika tidak, semua tab akan menampilkan data yang sama.
 
-3. **Interval ganda**
-   Selalu `clearInterval` sebelum membuat interval baru dan di cleanup function. React Strict Mode di development menjalankan effect dua kali.
+3. **Filter hanya di client**
+   Jangan memfilter array hasil `loadEntries()` tanpa parameter. API hanya mengembalikan 100 entri; data hari tertentu bisa terpotong.
 
-4. **Refresh di phase finished malah mengulang timer**
-   Pastikan `finishedAt` disimpan ke `localStorage` di `finishSession`, dan dibaca saat restore.
+4. **Batas hari salah**
+   `getDayRange("2026-11-08")` harus menghasilkan `2026-11-07T17:00:00Z` sampai `2026-11-08T17:00:00Z`. Jangan memakai tengah malam UTC.
 
-5. **Semua peserta dapat 300 detik**
-   Berarti tombol early finish tidak ada atau tidak memanggil `finishSession(startTime)`.
+5. **Menambah peserta saat filter Kemarin**
+   Peserta baru selalu `created_at = now` (hari ini). Setelah menambah, pindahkan filter ke "Hari Ini", jika tidak peserta baru tidak terlihat.
 
-6. **Durasi menjadi `NaN`**
-   Pastikan `startTime` berupa number dan `getElapsedSeconds` menangani nilai tidak valid.
+6. **Mengedit `created_at` tanpa sengaja**
+   API `PUT` tidak mengubah `created_at`. Jangan menambahkan field itu ke payload update.
 
-7. **Level `"0"` atau `"abc"` lolos**
-   Validasi client hanya UX. `parseEntry` di `lib/leaderboard.js` yang menjadi penentu akhir; pastikan error API ditampilkan.
+7. **Daftar lama tampil saat pindah tab**
+   Kosongkan `entries` dan set `loading = true` saat tab berubah agar skeleton tampil, bukan data hari sebelumnya.
 
-8. **Data ganda**
-   Disable tombol saat `saving` dan jangan render dua form submit sekaligus.
+8. **Interval ganda**
+   Effect leaderboard bergantung pada `selectedDay`. Cleanup harus `clearInterval` dan set `active = false`.
 
-9. **Dashboard rusak**
-   Jangan mengubah logika dashboard. Cukup tambahkan link di header.
+9. **Midnight boundary**
+   Saat halaman terbuka melewati tengah malam, `getRelativeDayKey` di dalam `refreshData` akan menghasilkan tanggal baru pada refresh berikutnya. Label hari ikut ter-update setelah state berubah. Jangan menyimpan date key sekali di module scope.
 
-10. **Timer tetap berjalan saat tab hidden**
-    Ini disengaja. Saat tab kembali aktif, timer akan mengejar dan mungkin langsung selesai. Jangan menambahkan pause, karena peserta bisa memanfaatkannya untuk menghentikan waktu.
+10. **`created_at` adalah waktu simpan, bukan waktu mulai sesi**
+    Sesi yang dimulai 23:58 dan disimpan 00:01 akan tercatat di hari berikutnya. Ini dapat diterima untuk kebutuhan saat ini. Jika ingin berdasarkan waktu mulai, tambahkan kolom `session_started_at` (Bagian 12).
 
-11. **`window.confirm` saat SSR**
-    Hanya dipanggil di event handler client, jadi aman. Jangan panggil di body komponen.
+11. **Validasi tanggal**
+    `isValidDateKey` harus menolak tanggal seperti `2026-02-31`, bukan hanya formatnya. Jangan hanya memakai regex.
 
-12. **`a.btn` tidak tampil sebagai tombol**
-    Pastikan blok CSS `a.btn` dari Bagian 7.5 sudah ditambahkan.
+12. **Index tidak terpakai**
+    Pastikan `CREATE INDEX ... ON leaderboard_entries (created_at)` dijalankan di `ensureSchema`. Tanpa index, query tetap benar tetapi lebih lambat saat data banyak.
+
+13. **Menghapus CSS timer**
+    Jangan hapus `.timer-*` atau `.badge-*`; `/play` memakainya.
+
+14. **Podium berantakan di mobile**
+    Pastikan media query `max-width: 560px` mengubah `.lb-podium` menjadi kolom dan mereset `order` menjadi `0`.
+
+15. **Nama panjang merusak layout**
+    Gunakan `min-width: 0` pada container flex dan `text-overflow: ellipsis` pada nama/origin.
+
+16. **Hydration mismatch**
+    Jangan memakai `Date` atau `toLocaleTimeString` saat render awal. Di kode ini, `lastUpdated` baru diisi di dalam `useEffect`, sehingga aman.
+
+17. **State update setelah unmount**
+    `active` flag di `useEffect` leaderboard mencegah `setEntries` setelah komponen unmount.
+
+18. **Mengubah API untuk menghapus durasi**
+    Jangan. Durasi masih dipakai untuk sorting. Cukup sembunyikan dari tampilan leaderboard.
+
+19. **Double submit**
+    Gunakan `saving` untuk menonaktifkan tombol dan mencegah data ganda.
+
+20. **Menganggap `loadEntries` selalu sukses**
+    `loadEntries` mengembalikan `[]` jika response gagal. UI akan menampilkan empty state; ini perilaku yang dapat diterima.
 
 ---
 
@@ -1258,29 +2064,17 @@ Task dinyatakan selesai jika **semua** poin berikut terpenuhi:
 
 Jangan dikerjakan pada task ini kecuali diminta:
 
-1. **Anti-cheat server-side**
-   Buat endpoint `POST /api/session/start` yang mengembalikan `sessionId` + `startedAt` bertanda tangan. Saat submit, server menghitung durasi sendiri dan menolak jika tidak konsisten.
-
-2. **Pilihan asal berupa dropdown/autocomplete**
-   Mengurangi typo nama sekolah. Butuh tabel referensi atau daftar statis.
-
-3. **QR Code menuju `/play`**
-   Ditempel di stand agar peserta langsung membuka halaman.
-
-4. **Refactor timer dashboard**
-   Gunakan `lib/session.js` di `app/dashboard/page.js` agar tidak ada duplikasi konstanta 300 dan logika durasi.
-
-5. **Notifikasi suara di 30 detik terakhir**
-   Membantu peserta menyadari waktu hampir habis.
-
-6. **Admin bisa mereset sesi aktif**
-   Berguna jika peserta meninggalkan perangkat di tengah sesi.
-
-7. **Rate limiting / moderasi entri**
-   Mencegah spam jika `/play` dibuka bebas di jaringan publik.
-
-8. **Ubah redirect home ke `/play`**
-   Saat ini `/` redirect ke `/leaderboard`. Jika perangkat stand ingin langsung membuka halaman player, ubah `app/page.js` menjadi `redirect("/play")`. Konfirmasi dulu dengan penanggung jawab stand karena ini mengubah halaman pertama yang dilihat pengunjung.
+1. **Date picker bebas** untuk melihat hari-hari sebelumnya.
+2. **Filter rentang tanggal** (mingguan/bulanan).
+3. **Leaderboard mingguan/bulanan** dengan tab tambahan.
+4. **Kolom `session_started_at`** jika pengelompokan harus mengikuti waktu mulai bermain, bukan waktu simpan.
+5. **Pagination** jika peserta per hari lebih dari 100.
+6. **Mode layar besar/TV** untuk leaderboard di stand.
+7. **Animasi masuk** untuk baris leaderboard saat data berubah.
+8. **QR code** menuju `/play` di hero.
+9. **Admin authentication** untuk `/dashboard`.
+10. **Soft delete / audit log** untuk perubahan data.
+11. **Cache API per tanggal** untuk mengurangi query saat ramai.
 
 ---
 
@@ -1288,23 +2082,24 @@ Jangan dikerjakan pada task ini kecuali diminta:
 
 ```
 app/
-  play/
-    page.js            ← BARU
-  api/leaderboard/
-    route.js           ← tidak berubah
   dashboard/
-    page.js            ← tambah link
+    page.js            ← GANTI: CRUD tanpa timer + filter hari
   leaderboard/
-    page.js            ← tambah link
-  globals.css          ← tambah style
+    page.js            ← GANTI: hero + tab hari + podium + daftar, tanpa durasi
+  play/
+    page.js            ← tidak berubah
+  api/leaderboard/
+    route.js           ← UBAH: GET ?date=, filter SQL, index created_at
+  globals.css          ← TAMBAH: .admin-note, .form-grid, .day-filter, .lb-*
   layout.js            ← tidak berubah
-  page.js              ← tidak berubah
 lib/
-  session.js           ← BARU
-  session.test.mjs     ← BARU
-  leaderboard.js       ← tidak berubah
+  leaderboard.js       ← UBAH: loadEntries(dateKey)
+  date.js              ← BARU
+  date.test.mjs        ← BARU
+  session.js           ← tidak berubah
   leaderboard.test.mjs ← tidak berubah
-package.json           ← update script test
+  session.test.mjs     ← tidak berubah
+package.json           ← UBAH: test mencakup date.test.mjs
 ```
 
-Selesai. Setelah semua checklist dan test terpenuhi, fitur halaman player mandiri siap digunakan di stand.
+Selesai. Setelah checklist dan pengujian terpenuhi, dashboard bisa dipakai untuk input cepat tanpa timer, leaderboard tampil lebih menarik tanpa durasi, dan peserta dipisahkan berdasarkan hari (hari ini, kemarin, semua) menggunakan zona waktu Asia/Jakarta.
