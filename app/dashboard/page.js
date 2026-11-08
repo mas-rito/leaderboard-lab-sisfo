@@ -177,9 +177,14 @@ export default function DashboardPage() {
     <section>
       <div className="header-row">
         <h1>Dashboard Kelola Leaderboard</h1>
-        <Link href="/leaderboard" className="link-btn">
-          Lihat Leaderboard Public
-        </Link>
+        <div className="header-links">
+          <Link href="/play" className="link-btn">
+            Halaman Player
+          </Link>
+          <Link href="/leaderboard" className="link-btn">
+            Lihat Leaderboard Public
+          </Link>
+        </div>
       </div>
 
       <form className="card" onSubmit={handleSubmit}>

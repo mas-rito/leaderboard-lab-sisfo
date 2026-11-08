@@ -28,9 +28,14 @@ export default function LeaderboardPage() {
           <h1>Leaderboard Game Stand</h1>
           <p className="subtitle">Laboratorium Sistem Informasi</p>
         </div>
-        <Link href="/dashboard" className="link-btn">
-          Kelola (Admin)
-        </Link>
+        <div className="header-links">
+          <Link href="/play" className="link-btn">
+            Main
+          </Link>
+          <Link href="/dashboard" className="link-btn">
+            Kelola (Admin)
+          </Link>
+        </div>
       </div>
 
       <div className="tie-breaker-info">

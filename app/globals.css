@@ -309,3 +309,92 @@ h2 {
   border-radius: 6px;
   margin-bottom: 16px;
 }
+
+/* ===== Halaman Player (/play) ===== */
+.header-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.play-card {
+  text-align: center;
+}
+
+.play-identity {
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.play-note {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin: 8px 0 16px;
+}
+
+.play-result {
+  font-size: 1rem;
+  margin: 8px 0 4px;
+  color: #166534;
+}
+
+.timer-warning {
+  color: #dc2626;
+}
+
+.btn-primary {
+  background: #2563eb;
+}
+
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.play-success {
+  text-align: center;
+}
+
+.play-success-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.play-success-grid > div {
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.play-success-grid span {
+  font-size: 0.75rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.play-success-grid strong {
+  font-size: 1.15rem;
+}
+
+.play-success .action-row {
+  justify-content: center;
+  flex-wrap: wrap;
+}
