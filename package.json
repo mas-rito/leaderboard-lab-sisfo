@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test lib/leaderboard.test.mjs lib/session.test.mjs"
+    "test": "node --test lib/leaderboard.test.mjs lib/session.test.mjs lib/date.test.mjs"
   },
   "dependencies": {
     "@neon/config": "^1.13.0",
