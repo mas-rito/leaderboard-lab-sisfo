@@ -23,17 +23,33 @@ function ensureSchema() {
           CREATE TABLE IF NOT EXISTS leaderboard_entries (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            level INTEGER NOT NULL CHECK (level >= 1)
+            origin TEXT NOT NULL DEFAULT '',
+            level INTEGER NOT NULL CHECK (level >= 1),
+            duration_seconds INTEGER NOT NULL DEFAULT 0 CHECK (duration_seconds >= 0 AND duration_seconds <= 300),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
         `;
         for (const item of INITIAL_ENTRIES) {
           await directSql`
-            INSERT INTO leaderboard_entries (id, name, level)
-            VALUES (${item.id}, ${item.name}, ${item.level})
+            INSERT INTO leaderboard_entries (id, name, origin, level, duration_seconds, created_at)
+            VALUES (${item.id}, ${item.name}, ${item.origin}, ${item.level}, ${item.duration_seconds}, ${item.created_at})
             ON CONFLICT (id) DO NOTHING
           `;
         }
+      } else {
+        // Migration penambahan kolom jika tabel lama sudah ada
+        await directSql`
+          ALTER TABLE leaderboard_entries
+          ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0 CHECK (duration_seconds >= 0 AND duration_seconds <= 300),
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+        `;
       }
+
+      await directSql`
+        CREATE INDEX IF NOT EXISTS idx_leaderboard_tie_breaker 
+        ON leaderboard_entries (level DESC, duration_seconds ASC, created_at ASC)
+      `;
     })().catch((err) => {
       schemaPromise = null;
       throw err;
@@ -44,15 +60,18 @@ function ensureSchema() {
 
 async function listEntries(sql) {
   const rows = await sql`
-    SELECT id, name, level
+    SELECT id, name, origin, level, duration_seconds, created_at
     FROM leaderboard_entries
-    ORDER BY level DESC, id ASC
+    ORDER BY level DESC, duration_seconds ASC, created_at ASC
     LIMIT 100
   `;
   return rows.map((row) => ({
     id: String(row.id),
     name: row.name,
+    origin: row.origin || "-",
     level: Number(row.level),
+    duration_seconds: Number(row.duration_seconds || 0),
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
   }));
 }
 
@@ -65,14 +84,21 @@ export async function GET() {
 export async function POST(request) {
   await ensureSchema();
   const body = await request.json();
-  const result = parseEntry(body?.name, body?.level);
+  const result = parseEntry(body?.name, body?.origin, body?.level, body?.duration_seconds);
   if (result.error) {
     return Response.json({ error: result.error }, { status: 400 });
   }
   const sql = getSql();
   await sql`
-    INSERT INTO leaderboard_entries (id, name, level)
-    VALUES (${result.entry.id}, ${result.entry.name}, ${result.entry.level})
+    INSERT INTO leaderboard_entries (id, name, origin, level, duration_seconds, created_at)
+    VALUES (
+      ${result.entry.id}, 
+      ${result.entry.name}, 
+      ${result.entry.origin}, 
+      ${result.entry.level}, 
+      ${result.entry.duration_seconds}, 
+      ${result.entry.created_at}
+    )
   `;
   const entries = await listEntries(sql);
   return Response.json({ entries, entry: result.entry }, { status: 201 });
@@ -81,14 +107,24 @@ export async function POST(request) {
 export async function PUT(request) {
   await ensureSchema();
   const body = await request.json();
-  const result = parseEntry(body?.name, body?.level, body?.id ? String(body.id) : undefined);
+  const result = parseEntry(
+    body?.name,
+    body?.origin,
+    body?.level,
+    body?.duration_seconds,
+    body?.id ? String(body.id) : undefined
+  );
   if (result.error) {
     return Response.json({ error: result.error }, { status: 400 });
   }
   const sql = getSql();
   const updated = await sql`
     UPDATE leaderboard_entries
-    SET name = ${result.entry.name}, level = ${result.entry.level}
+    SET 
+      name = ${result.entry.name}, 
+      origin = ${result.entry.origin},
+      level = ${result.entry.level},
+      duration_seconds = ${result.entry.duration_seconds}
     WHERE id = ${result.entry.id}
     RETURNING id
   `;
