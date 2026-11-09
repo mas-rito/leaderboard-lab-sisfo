@@ -4,8 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatDuration, saveEntry } from "../../lib/leaderboard";
 import {
+  DEFAULT_COUNTDOWN_SECONDS,
+  SETTINGS_REFRESH_MS,
+  loadCountdownSeconds,
+} from "../../lib/settings";
+import { isValidWhatsApp, normalizeWhatsApp } from "../../lib/whatsapp";
+import {
   SESSION_STORAGE_KEY,
-  TOTAL_COUNTDOWN_SECONDS,
   getElapsedSeconds,
   getRemainingSeconds,
   parseStoredSession,
@@ -19,16 +24,25 @@ export default function PlayPage() {
 
   const [name, setName] = useState("");
   const [origin, setOrigin] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [level, setLevel] = useState("");
+
+  const [countdownSeconds, setCountdownSeconds] = useState(
+    DEFAULT_COUNTDOWN_SECONDS
+  );
+  const [sessionCountdown, setSessionCountdown] = useState(
+    DEFAULT_COUNTDOWN_SECONDS
+  );
 
   const [startTime, setStartTime] = useState(null);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState(
-    TOTAL_COUNTDOWN_SECONDS
+    DEFAULT_COUNTDOWN_SECONDS
   );
 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [savedInfo, setSavedInfo] = useState(null);
 
   const intervalRef = useRef(null);
@@ -42,10 +56,14 @@ export default function PlayPage() {
 
   // Menyelesaikan sesi: hitung durasi dari timestamp, lalu simpan status finished.
   const finishSession = useCallback(
-    (startedAt, finishedAt = Date.now()) => {
+    (
+      startedAt,
+      finishedAt = Date.now(),
+      limitSeconds = DEFAULT_COUNTDOWN_SECONDS
+    ) => {
       clearTimer();
 
-      const elapsed = getElapsedSeconds(startedAt, finishedAt);
+      const elapsed = getElapsedSeconds(startedAt, finishedAt, limitSeconds);
       setDurationSeconds(elapsed);
       setRemainingSeconds(0);
       setPhase("finished");
@@ -58,9 +76,7 @@ export default function PlayPage() {
           localStorage.setItem(
             SESSION_STORAGE_KEY,
             JSON.stringify({
-              name: stored.name,
-              origin: stored.origin,
-              startTime: stored.startTime,
+              ...stored,
               finishedAt,
             })
           );
@@ -84,23 +100,36 @@ export default function PlayPage() {
     if (stored) {
       setName(stored.name);
       setOrigin(stored.origin);
+      setWhatsapp(stored.whatsapp);
       setStartTime(stored.startTime);
+      setCountdownSeconds(stored.countdownSeconds);
+      setSessionCountdown(stored.countdownSeconds);
 
       if (stored.finishedAt) {
         setDurationSeconds(
-          getElapsedSeconds(stored.startTime, stored.finishedAt)
+          getElapsedSeconds(
+            stored.startTime,
+            stored.finishedAt,
+            stored.countdownSeconds
+          )
         );
         setRemainingSeconds(0);
         setPhase("finished");
       } else {
-        const elapsed = getElapsedSeconds(stored.startTime, Date.now());
-        if (elapsed >= TOTAL_COUNTDOWN_SECONDS) {
+        const elapsed = getElapsedSeconds(
+          stored.startTime,
+          Date.now(),
+          stored.countdownSeconds
+        );
+
+        if (elapsed >= stored.countdownSeconds) {
           finishSession(
             stored.startTime,
-            stored.startTime + TOTAL_COUNTDOWN_SECONDS * 1000
+            stored.startTime + stored.countdownSeconds * 1000,
+            stored.countdownSeconds
           );
         } else {
-          setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS - elapsed);
+          setRemainingSeconds(stored.countdownSeconds - elapsed);
           setPhase("running");
         }
       }
@@ -109,29 +138,76 @@ export default function PlayPage() {
     return clearTimer;
   }, [clearTimer, finishSession]);
 
+  // Ambil pengaturan countdown terbaru selama pemain masih di form.
+  useEffect(() => {
+    if (phase !== "form") return;
+
+    let active = true;
+
+    async function refresh() {
+      const value = await loadCountdownSeconds(countdownSeconds);
+      if (active && value !== countdownSeconds) {
+        setCountdownSeconds(value);
+      }
+    }
+
+    refresh();
+    const interval = setInterval(refresh, SETTINGS_REFRESH_MS);
+    const onFocus = () => refresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [phase, countdownSeconds]);
+
   // Tick countdown. Selalu dihitung dari startTime agar tidak drift.
   useEffect(() => {
     if (phase !== "running" || !startTime) return;
 
     clearTimer();
     intervalRef.current = setInterval(() => {
-      const left = getRemainingSeconds(startTime, Date.now());
+      const left = getRemainingSeconds(
+        startTime,
+        Date.now(),
+        sessionCountdown
+      );
+
       if (left <= 0) {
-        finishSession(startTime, startTime + TOTAL_COUNTDOWN_SECONDS * 1000);
+        finishSession(
+          startTime,
+          startTime + sessionCountdown * 1000,
+          sessionCountdown
+        );
       } else {
         setRemainingSeconds(left);
       }
     }, 250);
 
     return clearTimer;
-  }, [phase, startTime, clearTimer, finishSession]);
+  }, [
+    phase,
+    startTime,
+    sessionCountdown,
+    clearTimer,
+    finishSession,
+  ]);
 
-  function handleStart(event) {
+  async function handleStart(event) {
     event.preventDefault();
     setError("");
 
     const cleanName = name.trim();
     const cleanOrigin = origin.trim();
+    const cleanWhatsapp = normalizeWhatsApp(whatsapp);
 
     if (!cleanName) {
       setError("Nama wajib diisi sebelum mulai.");
@@ -141,10 +217,29 @@ export default function PlayPage() {
       setError("Asal sekolah/jurusan wajib diisi sebelum mulai.");
       return;
     }
+    if (!isValidWhatsApp(cleanWhatsapp)) {
+      setError(
+        "Nomor WhatsApp wajib diisi dengan format yang valid (contoh: 081234567890)."
+      );
+      return;
+    }
+
+    setStarting(true);
+    let limit = countdownSeconds;
+
+    try {
+      limit = await loadCountdownSeconds(countdownSeconds);
+      setCountdownSeconds(limit);
+    } catch {
+      // loadCountdownSeconds sudah punya fallback.
+    } finally {
+      setStarting(false);
+    }
 
     const now = Date.now();
     setStartTime(now);
-    setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS);
+    setSessionCountdown(limit);
+    setRemainingSeconds(limit);
     setDurationSeconds(0);
     setLevel("");
     setSavedInfo(null);
@@ -156,7 +251,9 @@ export default function PlayPage() {
         JSON.stringify({
           name: cleanName,
           origin: cleanOrigin,
+          whatsapp: cleanWhatsapp,
           startTime: now,
+          countdownSeconds: limit,
           finishedAt: null,
         })
       );
@@ -168,7 +265,7 @@ export default function PlayPage() {
   function handleFinishEarly() {
     if (!startTime) return;
 
-    const elapsed = getElapsedSeconds(startTime, Date.now());
+    const elapsed = getElapsedSeconds(startTime, Date.now(), sessionCountdown);
     if (elapsed < MIN_EARLY_FINISH_SECONDS) {
       setError(
         `Tunggu minimal ${MIN_EARLY_FINISH_SECONDS} detik sebelum menyelesaikan sesi.`
@@ -177,7 +274,7 @@ export default function PlayPage() {
     }
 
     setError("");
-    finishSession(startTime);
+    finishSession(startTime, Date.now(), sessionCountdown);
   }
 
   async function handleSubmit(event) {
@@ -191,7 +288,13 @@ export default function PlayPage() {
 
     setSaving(true);
     try {
-      const result = await saveEntry(name, origin, level, durationSeconds);
+      const result = await saveEntry(
+        name,
+        origin,
+        level,
+        durationSeconds,
+        whatsapp
+      );
 
       if (result?.error) {
         setError(result.error);
@@ -232,10 +335,12 @@ export default function PlayPage() {
     setPhase("form");
     setName("");
     setOrigin("");
+    setWhatsapp("");
     setLevel("");
     setStartTime(null);
     setDurationSeconds(0);
-    setRemainingSeconds(TOTAL_COUNTDOWN_SECONDS);
+    setSessionCountdown(countdownSeconds);
+    setRemainingSeconds(countdownSeconds);
     setSavedInfo(null);
     setError("");
     try {
@@ -271,8 +376,8 @@ export default function PlayPage() {
         <form className="card" onSubmit={handleStart}>
           <h2>Isi Identitas Peserta</h2>
           <p className="play-note">
-            Isi nama dan asal sekolah/jurusan, lalu tekan mulai. Waktu bermain
-            maksimal 5 menit.
+            Isi nama, asal sekolah/jurusan, dan nomor WhatsApp aktif, lalu
+            tekan Mulai. Timer akan berjalan otomatis.
           </p>
 
           {error && <p className="msg-error">{error}</p>}
@@ -305,8 +410,31 @@ export default function PlayPage() {
             />
           </div>
 
-          <button type="submit" className="btn btn-primary btn-block">
-            Mulai (5 Menit)
+          <div className="form-group">
+            <label htmlFor="player-whatsapp">Nomor WhatsApp Aktif</label>
+            <input
+              id="player-whatsapp"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="Contoh: 081234567890"
+              value={whatsapp}
+              onChange={(event) => setWhatsapp(event.target.value)}
+              maxLength={20}
+              required
+            />
+            <small className="help-text">
+              Dipakai admin untuk menghubungi jika ada kendala. Tidak
+              ditampilkan di leaderboard.
+            </small>
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn-primary btn-block"
+            disabled={starting}
+          >
+            {starting ? "Menyiapkan..." : "Mulai"}
           </button>
         </form>
       )}

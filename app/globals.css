@@ -447,6 +447,40 @@ a.btn {
   font: inherit;
 }
 
+/* ===== Pengaturan countdown & WhatsApp dashboard ===== */
+.settings-card {
+  margin-bottom: 16px;
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.settings-card h2 {
+  margin-bottom: 4px;
+}
+
+.settings-card .help-text {
+  margin-bottom: 12px;
+}
+
+.player-whatsapp {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #15803d;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.player-whatsapp:hover {
+  text-decoration: underline;
+}
+
+.player-whatsapp-empty {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
 /* ===== Leaderboard publik ===== */
 .leaderboard-page {
   display: flex;
