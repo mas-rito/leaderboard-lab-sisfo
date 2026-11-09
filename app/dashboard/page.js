@@ -11,8 +11,15 @@ import {
   formatDuration,
 } from "../../lib/leaderboard";
 import { getRelativeDayKey } from "../../lib/date";
-
-const DEFAULT_DURATION_SECONDS = 300;
+import {
+  DEFAULT_COUNTDOWN_SECONDS,
+  MAX_COUNTDOWN_SECONDS,
+  MIN_COUNTDOWN_SECONDS,
+  loadCountdownSeconds,
+  parseCountdownSeconds,
+  saveCountdownSeconds,
+} from "../../lib/settings";
+import { formatWhatsApp, getWhatsAppLink } from "../../lib/whatsapp";
 
 const DAY_OPTIONS = [
   { value: "today", label: "Hari Ini" },
@@ -28,10 +35,21 @@ export default function DashboardPage() {
 
   const [name, setName] = useState("");
   const [origin, setOrigin] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [level, setLevel] = useState("");
   const [durationSeconds, setDurationSeconds] = useState(
-    DEFAULT_DURATION_SECONDS
+    DEFAULT_COUNTDOWN_SECONDS
   );
+
+  const [countdownSeconds, setCountdownSeconds] = useState(
+    DEFAULT_COUNTDOWN_SECONDS
+  );
+  const [countdownInput, setCountdownInput] = useState(
+    String(DEFAULT_COUNTDOWN_SECONDS)
+  );
+  const [savingCountdown, setSavingCountdown] = useState(false);
+  const [countdownError, setCountdownError] = useState("");
+  const [countdownSuccess, setCountdownSuccess] = useState("");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -41,7 +59,9 @@ export default function DashboardPage() {
     let active = true;
     setLoadingEntries(true);
 
-    loadEntries(getRelativeDayKey(selectedDay)).then((data) => {
+    loadEntries(getRelativeDayKey(selectedDay), {
+      includeWhatsApp: true,
+    }).then((data) => {
       if (!active) return;
       setEntries(data);
       setLoadingEntries(false);
@@ -52,17 +72,37 @@ export default function DashboardPage() {
     };
   }, [selectedDay]);
 
+  useEffect(() => {
+    let active = true;
+
+    loadCountdownSeconds().then((value) => {
+      if (!active) return;
+      setCountdownSeconds(value);
+      setCountdownInput(String(value));
+      setDurationSeconds((current) =>
+        current === DEFAULT_COUNTDOWN_SECONDS ? value : current
+      );
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function resetForm() {
     setEditingId(null);
     setName("");
     setOrigin("");
+    setWhatsapp("");
     setLevel("");
-    setDurationSeconds(DEFAULT_DURATION_SECONDS);
+    setDurationSeconds(countdownSeconds);
     setError("");
   }
 
   async function refreshEntries(day = selectedDay) {
-    const data = await loadEntries(getRelativeDayKey(day));
+    const data = await loadEntries(getRelativeDayKey(day), {
+      includeWhatsApp: true,
+    });
     setEntries(data);
   }
 
@@ -74,8 +114,15 @@ export default function DashboardPage() {
 
     try {
       const result = editingId
-        ? await updateEntry(editingId, name, origin, level, durationSeconds)
-        : await saveEntry(name, origin, level, durationSeconds);
+        ? await updateEntry(
+            editingId,
+            name,
+            origin,
+            level,
+            durationSeconds,
+            whatsapp
+          )
+        : await saveEntry(name, origin, level, durationSeconds, whatsapp);
 
       if (result?.error) {
         setError(result.error);
@@ -108,15 +155,51 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleSaveCountdown(event) {
+    event.preventDefault();
+    setCountdownError("");
+    setCountdownSuccess("");
+
+    const parsed = parseCountdownSeconds(countdownInput);
+    if (parsed.error) {
+      setCountdownError(parsed.error);
+      return;
+    }
+
+    setSavingCountdown(true);
+    try {
+      const result = await saveCountdownSeconds(parsed.value);
+
+      if (result?.error) {
+        setCountdownError(result.error);
+        return;
+      }
+
+      const next = Number(result.countdown_seconds);
+      setCountdownSeconds(next);
+      setCountdownInput(String(next));
+      setCountdownSuccess(
+        `Countdown diperbarui menjadi ${formatDuration(next)}. Sesi yang sedang berjalan di /play tidak berubah.`
+      );
+    } catch {
+      setCountdownError(
+        "Gagal menyimpan countdown. Periksa koneksi lalu coba lagi."
+      );
+    } finally {
+      setSavingCountdown(false);
+    }
+  }
+
   function handleEdit(item) {
     setError("");
     setSuccess("");
     setEditingId(item.id);
     setName(item.name);
     setOrigin(item.origin || "");
+    setWhatsapp(item.whatsapp || "");
     setLevel(String(item.level));
     setDurationSeconds(
-      Number(item.duration_seconds ?? DEFAULT_DURATION_SECONDS)
+      Number(item.duration_seconds ?? DEFAULT_COUNTDOWN_SECONDS)
     );
   }
 
@@ -158,10 +241,51 @@ export default function DashboardPage() {
       </div>
 
       <div className="admin-note">
-        Timer 5 menit hanya berjalan di{" "}
-        <Link href="/play">halaman player</Link>. Peserta yang ditambahkan dari
+        Timer berjalan di halaman player sesuai Pengaturan Countdown (saat ini{" "}
+        {formatDuration(countdownSeconds)}). Peserta yang ditambahkan dari
         dashboard otomatis tercatat sebagai peserta hari ini.
       </div>
+
+      <form className="card settings-card" onSubmit={handleSaveCountdown}>
+        <h2>Pengaturan Countdown</h2>
+        <p className="help-text">
+          Durasi ini dipakai halaman player untuk sesi baru. Sesi yang sedang
+          berjalan tidak berubah.
+        </p>
+
+        {countdownError && <p className="msg-error">{countdownError}</p>}
+        {countdownSuccess && <p className="msg-ok">{countdownSuccess}</p>}
+
+        <div className="form-grid">
+          <div className="form-group">
+            <label htmlFor="countdown-seconds">Durasi Countdown (detik)</label>
+            <input
+              id="countdown-seconds"
+              type="number"
+              min={MIN_COUNTDOWN_SECONDS}
+              max={MAX_COUNTDOWN_SECONDS}
+              step="1"
+              value={countdownInput}
+              onChange={(event) => setCountdownInput(event.target.value)}
+              required
+            />
+            <small className="help-text">
+              {formatDuration(countdownInput)} — minimal {MIN_COUNTDOWN_SECONDS}{" "}
+              detik, maksimal {MAX_COUNTDOWN_SECONDS} detik.
+            </small>
+          </div>
+        </div>
+
+        <div className="action-row">
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={savingCountdown}
+          >
+            {savingCountdown ? "Menyimpan..." : "Simpan Countdown"}
+          </button>
+        </div>
+      </form>
 
       <div className="day-filter">
         <label htmlFor="dashboard-day">Tampilkan peserta</label>
@@ -209,6 +333,24 @@ export default function DashboardPage() {
           />
         </div>
 
+        <div className="form-group">
+          <label htmlFor="whatsapp">Nomor WhatsApp Aktif</label>
+          <input
+            id="whatsapp"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="Contoh: 081234567890"
+            value={whatsapp}
+            onChange={(event) => setWhatsapp(event.target.value)}
+            maxLength={20}
+            required
+          />
+          <small className="help-text">
+            Hanya terlihat di dashboard admin, tidak ditampilkan di leaderboard.
+          </small>
+        </div>
+
         <div className="form-grid">
           <div className="form-group">
             <label htmlFor="level">Level</label>
@@ -230,7 +372,7 @@ export default function DashboardPage() {
               id="duration"
               type="number"
               min="0"
-              max="300"
+              max={MAX_COUNTDOWN_SECONDS}
               step="1"
               value={durationSeconds}
               onChange={(event) =>
@@ -287,6 +429,20 @@ export default function DashboardPage() {
                 <div className="player-meta">
                   <span className="player-name">{item.name}</span>
                   <span className="player-origin">{item.origin || "-"}</span>
+                  {item.whatsapp ? (
+                    <a
+                      className="player-whatsapp"
+                      href={getWhatsAppLink(item.whatsapp)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      WA: {formatWhatsApp(item.whatsapp)}
+                    </a>
+                  ) : (
+                    <span className="player-whatsapp player-whatsapp-empty">
+                      WA: belum ada
+                    </span>
+                  )}
                 </div>
               </div>
 
